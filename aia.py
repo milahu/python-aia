@@ -119,6 +119,8 @@ class AIASession:
             for ca_der in self._context.get_ca_certs(True)
         }
 
+        self._cadata_from_host_regex = dict()
+
     @CachedMethod
     def get_host_cert(self, host):
         """
@@ -183,16 +185,13 @@ class AIASession:
             logger.debug(f"Found another {host} certificate chain entry (AIA)")
             der_cert = self._get_ca_issuer_cert(cert_dict["aia_ca_issuers"][0])
 
-    def validate_certificate_chain(self, der_certs):
+    def validate_certificate_chain(self, certs):
         """
         Validate a given certificate chain which should be full,
         as a list of DER (binary) certificates from leaf to root
         (in this order and including both),
         raising an ``ssl.SSLError`` when the chain isn't valid.
         """
-
-        certs = list(map(x509.load_der_x509_certificate, der_certs))
-
         target_cert = certs[0]
         intermediary_cert_list = certs[1:-1]
         root_cert = certs[-1]
@@ -218,18 +217,48 @@ class AIASession:
         #except x509.UnsupportedGeneralNameType:
         #    raise ssl.SSLError
 
-    @CachedMethod
     def cadata_from_host(self, host):
         """
         Get the certification chain, apart from the leaf node,
         as joined PEM (ASCII string in base64 with extra delimiters)
         certificates in a single string, to be used in a SSLContext.
         """
+
+        host = host.lower()
+
+        for host_regex in self._cadata_from_host_regex:
+            if host_regex.fullmatch(host):
+                # read cache
+                return self._cadata_from_host_regex[host_regex]
+
         der_certs = list(self.aia_chase(host))
+
+        # TODO move up to aia_chase
+        #   load cert as soon as possible to avoid double-parsing
+        certs = list(map(x509.load_der_x509_certificate, der_certs))
+
         logger.info(f"Checking the {host} certificate chain...")
-        self.validate_certificate_chain(der_certs)
+        self.validate_certificate_chain(certs)
         logger.info(f"The {host} certificate chain is valid!")
-        return "".join(ssl.DER_cert_to_PEM_cert(dc) for dc in der_certs[1:])
+        cadata = "".join(ssl.DER_cert_to_PEM_cert(dc) for dc in der_certs[1:])
+
+        target_cert = certs[0]
+        target_name = get_cn_of_name(target_cert.subject).lower() # can be "*.example.com"
+        # host can have port. target_name has no port
+        # port is between 0 and 65535 inclusive
+        host_regex = target_name.replace(".", "\\.").replace("*", ".*") + "(?::[0-9]{1,5})?"
+        host_regex = re.compile(host_regex)
+
+        # limit cache size
+        # fifo cache. simpler than lru cache
+        while len(self._cadata_from_host_regex) > 128:
+            key = next(iter(self._cadata_from_host_regex))
+            del self._cadata_from_host_regex[key]
+
+        # write cache
+        self._cadata_from_host_regex[host_regex] = cadata
+
+        return cadata
 
     def cadata_from_url(self, url):
         """Façade to the ``cadata_from_host`` method."""
