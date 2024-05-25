@@ -62,6 +62,12 @@ context = aia_session.ssl_context_from_url(url)
 response = urlopen(url, context=context)
 ```
 
+To cache the downloaded intermediary certificates on disk:
+
+```py
+aia_session = AIASession(cache_dir="/tmp/aia-certs")
+```
+
 The context methods also helps when working with HTTP client libraries.
 For example, with [`requests`](http://python-requests.org/):
 

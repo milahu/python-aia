@@ -1,3 +1,4 @@
+import os
 from contextlib import ExitStack
 from functools import lru_cache, partial
 import logging
@@ -107,8 +108,18 @@ def openssl_get_cert_info(cert_der):
 
 class AIASession:
 
-    def __init__(self, user_agent=DEFAULT_USER_AGENT):
+    def __init__(
+            self,
+            user_agent=DEFAULT_USER_AGENT,
+            cache_dir=None,
+        ):
+        """
+        Create a new session.
+        cache_dir is a directory path,
+        where downloaded intermediary certificates are stored.
+        """
         self.user_agent = user_agent
+        self.cache_dir = cache_dir
         self._context = ssl.SSLContext()  # TLS (don't check broken chain)
         self._context.load_default_certs()
 
@@ -143,14 +154,28 @@ class AIASession:
         as the CA Issuer URI in the AIA extension
         of the previous "node" (certificate) of the chain.
         """
-        if urlsplit(url).scheme != "http":
+        url_parsed = urlsplit(url)
+        if url_parsed.scheme != "http":
             raise AIASchemeError("Invalid CA issuer certificate URI protocol")
+        if self.cache_dir:
+            cache_path = self.cache_dir + "/" + url_parsed.netloc + url_parsed.path
+        else:
+            cache_path = None
+        if cache_path and os.path.exists(cache_path):
+            with open(cache_path, "rb") as f:
+                return f.read() # read cache
         logger.debug(f"Downloading CA issuer certificate at {url}")
         req = Request(url=url, headers={"User-Agent": self.user_agent})
         with urlopen(req) as resp:
             if resp.status != 200:
                 raise AIADownloadError(f"HTTP {resp.status} (CA Issuer Cert.)")
-            return resp.read()
+            data = resp.read()
+            # check again if cache_path exists. can have multiple writers
+            if cache_path and not os.path.exists(cache_path):
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "wb") as f:
+                    f.write(data) # write cache
+            return data
 
     def aia_chase(self, host):
         """
