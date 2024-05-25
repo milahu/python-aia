@@ -33,6 +33,10 @@ setuptools.setup(
     py_modules=["aia"],
     include_package_data=True,
     python_requires=">=3.6",
+    install_requires=[
+        "cryptography",
+        "certifi",
+    ],
     classifiers=[
         "Development Status :: 2 - Pre-Alpha",
         "Environment :: Web Environment",

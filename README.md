@@ -17,7 +17,7 @@ of each certificate,
 and gets the root certificate locally, from the system.
 
 **How does it validate the certificate chain?**
-Through OpenSSL, which must be installed as an external dependency.
+Through OpenSSL, via the [cryptography](https://github.com/pyca/cryptography) module.
 
 **When should I use it?**
 Ideally, never, but that might not be an option.
@@ -30,8 +30,6 @@ or get the intermediary certificates in the chain through AIA
 
 
 ## How to install
-
-Anywhere, assuming OpenSSL is already installed:
 
 ```bash
 pip install aia
@@ -94,7 +92,7 @@ context = aia_session.ssl_context_from_url(url)
 resp = httpx.get(url, verify=context)
 ```
 
-The certificate fetching part of this library and the OpenSSL call
+The certificate fetching and validating part of this library
 are blocking, so this library is still not prepared
 for asynchronous code.
 But one can easily make some workaround to use it, for example with
