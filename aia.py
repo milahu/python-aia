@@ -223,13 +223,23 @@ class AIASession:
         as joined PEM (ASCII string in base64 with extra delimiters)
         certificates in a single string, to be used in a SSLContext.
         """
+        cadata, host_regex = self.cadata_and_host_regex_from_host(host)
+        return cadata
 
+    def cadata_and_host_regex_from_host(self, host):
+        """
+        Get the certification chain and the host regex.
+        Note: The host regex only matches lowercase hostnames.
+        The host regex also matches ports like example.com:12345.
+        See also cadata_from_host
+        """
         host = host.lower()
 
         for host_regex in self._cadata_from_host_regex:
             if host_regex.fullmatch(host):
                 # read cache
-                return self._cadata_from_host_regex[host_regex]
+                cadata = self._cadata_from_host_regex[host_regex]
+                return cadata, host_regex
 
         der_certs = list(self.aia_chase(host))
 
@@ -258,7 +268,7 @@ class AIASession:
         # write cache
         self._cadata_from_host_regex[host_regex] = cadata
 
-        return cadata
+        return cadata, host_regex
 
     def cadata_from_url(self, url):
         """Façade to the ``cadata_from_host`` method."""
