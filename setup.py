@@ -34,6 +34,7 @@ setuptools.setup(
     include_package_data=True,
     python_requires=">=3.6",
     install_requires=[
+        "pyopenssl",
         "cryptography",
         "certifi",
     ],
@@ -43,7 +44,7 @@ setuptools.setup(
         "Intended Audience :: Developers",
         "Intended Audience :: System Administrators",
         "License :: OSI Approved :: BSD License",
-        "Operating System :: OS Independent",  # Assuming OpenSSL is available
+        "Operating System :: OS Independent",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
