@@ -14,15 +14,24 @@ from urllib.parse import urlsplit
 import OpenSSL
 
 # https://cryptography.io/en/latest/x509/
+import cryptography
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import pkcs7
 
 import certifi
 
 
 __version__ = "0.2.0"
 
+# logging.getLogger('aia').setLevel(logging.DEBUG)
+# import aia
 logger = logging.getLogger(__name__)
+
+logger.setLevel(logging.DEBUG) # FIXME not working
+logger.debug = print
+
+logger.debug(f"imported aia {__version__}")
 
 DEFAULT_USER_AGENT = f"Python-aia/{__version__}"
 
@@ -118,14 +127,18 @@ class AIASession:
     def __init__(
             self,
             user_agent=DEFAULT_USER_AGENT,
+            cache_db=None,
             cache_dir=None,
         ):
         """
         Create a new session.
-        cache_dir is a directory path,
-        where downloaded intermediary certificates are stored.
+        Downloaded certificates are cached in cache_dir or cache_db.
         """
+        logger.debug("creating AIASession")
         self.user_agent = user_agent
+        self.cache_db = cache_db
+        self.cache_db_con = None
+        self.cache_db_cur = None
         self.cache_dir = cache_dir
         self._context = OpenSSL.SSL.Context(method=OpenSSL.SSL.TLS_CLIENT_METHOD)
         self._context.load_verify_locations(cafile=certifi.where())
@@ -164,6 +177,151 @@ class AIASession:
         rest_cert_chain = full_cert_chain[len(verified_cert_chain):]
         return verified_cert_chain, rest_cert_chain
 
+    def _init_cache_db(self):
+        if self.cache_db_con:
+            return
+        import sqlite3
+        os.makedirs(os.path.dirname(self.cache_db), exist_ok=True)
+        self.cache_db_con = sqlite3.connect(self.cache_db)
+        self.cache_db_cur = self.cache_db_con.cursor()
+        # note: we do not store the cert's fetch time for better privacy
+        # TODO use nssdb format? https://github.com/milahu/nssdb-py
+        # how does chrome cache the fetched certs?
+        query = "\n".join([
+            "CREATE TABLE certs (",
+            "  url TEXT PRIMARY KEY,",
+            "  cert_der BLOB",
+            ")",
+        ])
+        try:
+            self.cache_db_cur.execute(query)
+            logger.debug(f"created table certs in cache_db {self.cache_db}")
+        except sqlite3.OperationalError as exc:
+            if str(exc) != "table certs already exists":
+                raise
+
+    def _read_cert_cache(self, url_parsed):
+        if not self.cache_dir and not self.cache_db:
+            # caching is disabled
+            return
+        url = url_parsed.geturl()
+        # prefer cache_db
+        if self.cache_db:
+            self._init_cache_db()
+            query = "select cert_der from certs where url = ?"
+            args = (url,)
+            cur = self.cache_db_cur.execute(query, args)
+            row = cur.fetchone()
+            if row:
+                logger.debug(f"found cert in cache_db: {url}")
+                cert_der = row[0]
+                # no. here we need pyopenssl cert # TODO why?
+                #cert = x509.load_der_x509_certificate(cert_der)
+                cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_der)
+                return cert
+        if self.cache_dir:
+            cache_path = self.cache_dir + "/" + url_parsed.netloc + url_parsed.path
+            if os.path.exists(cache_path):
+                logger.debug(f"found cert in cache_dir: {url}")
+                with open(cache_path, "rb") as f:
+                    cert_der = f.read()
+                # no. here we need pyopenssl cert # TODO why?
+                #cert = x509.load_der_x509_certificate(cert_der)
+                cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_der)
+                return cert
+        logger.debug("not found cert in cache: {url}")
+
+    def _write_cert_cache(self, url_parsed, cert):
+        if not self.cache_dir and not self.cache_db:
+            # caching is disabled
+            return
+        url = url_parsed.geturl()
+        cert_der = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert)
+        if self.cache_db:
+            logger.debug(f"adding cert to cache_db: {url}")
+            self._init_cache_db()
+            query = "insert into certs (url, cert_der) values (?, ?)"
+            args = (url, cert_der)
+            cur = self.cache_db_cur.execute(query, args)
+            print("cur", cur)
+            if cur.rowcount != 1:
+                logger.warning(f"failed to add cert to cache_db: {url}")
+            # write to disk
+            self.cache_db_con.commit()
+        if self.cache_dir:
+            cache_path = self.cache_dir + "/" + url_parsed.netloc + url_parsed.path
+            # check again if cache_path exists. can have multiple writers
+            if not os.path.exists(cache_path):
+                logger.debug(f"adding cert to cache_dir: {url}")
+                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                with open(cache_path, "wb") as f:
+                    f.write(cert_der)
+
+    def _load_cert_from_bytes(self, cert_bytes):
+        # TODO pyopenssl or cryptography
+        # try to load DER = ASN1 format
+        try:
+            # no. here we need pyopenssl cert # TODO why?
+            #cert = x509.load_der_x509_certificate(cert_der)
+            cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_bytes)
+            return cert
+        except OpenSSL.crypto.Error:
+            pass
+        #except Exception as exc:
+        #    print("exc", type(exc), exc)
+        #    raise
+
+        # try to load PKCS7 format
+        # https://source.chromium.org/chromium/chromium/src/+/main:net/cert/internal/cert_issuer_source_aia.cc
+        # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#pkcs7
+        # ParseCertsFromCms
+
+        # try to load PKCS7-DER format
+        try:
+            # FIXME AttributeError: module 'cryptography.hazmat.primitives.serialization' has no attribute 'pkcs7'. Did you mean: 'pkcs12'?
+            # cryptography-42.0.5
+            certs = pkcs7.load_der_pkcs7_certificates(cert_bytes)
+            assert len(certs) == 1 # TODO
+            cert = certs[0]
+            # here we need pyopenssl cert # TODO why?
+            cert = OpenSSL.crypto.X509.from_cryptography(cert)
+            return cert
+        except ValueError:
+            # ValueError: Unable to parse PKCS7 data
+            pass
+        #except Exception as exc:
+        #    print("exc", type(exc), exc)
+        #    raise
+
+        # try to load PKCS7-PEM format
+        try:
+            certs = pkcs7.load_pem_pkcs7_certificates(cert_bytes)
+            assert len(certs) == 1 # TODO
+            cert = certs[0]
+            # here we need pyopenssl cert # TODO why?
+            cert = OpenSSL.crypto.X509.from_cryptography(cert)
+            return cert
+        except ValueError:
+            # ValueError: Unable to parse PKCS7 data
+            pass
+        #except Exception as exc:
+        #    print("exc", type(exc), exc)
+        #    raise
+
+        # try to load PEM format
+        try:
+            cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_PEM, cert_bytes)
+            return cert
+        except OpenSSL.crypto.Error:
+            pass
+        #try:
+        #except Exception as exc:
+        #    print("exc", type(exc), exc)
+        #    raise
+
+        # TODO more specific
+        raise Exception(f"failed to parse cert from {url}. cert_bytes: {cert_bytes.hex()}")
+
     @CachedMethod
     def _get_ca_issuer_cert(self, url):
         """
@@ -174,52 +332,50 @@ class AIASession:
         """
         url_parsed = urlsplit(url)
         if url_parsed.scheme != "http":
+            # ERR_DISALLOWED_URL_SCHEME
             raise AIASchemeError("Invalid CA issuer certificate URI protocol")
-        if self.cache_dir:
-            cache_path = self.cache_dir + "/" + url_parsed.netloc + url_parsed.path
-        else:
-            cache_path = None
-        if cache_path and os.path.exists(cache_path):
-            logger.debug("reading cache", cache_path)
-            with open(cache_path, "rb") as f:
-                cert_der = f.read() # read cache
-            #cert = x509.load_der_x509_certificate(cert_der) no. here we need pyopenssl cert
-            cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_der)
+        cert = self._read_cert_cache(url_parsed)
+        if cert:
             return cert
-        logger.debug(f"Downloading CA issuer certificate at {url}")
+        logger.debug(f"Downloading CA issuer certificate from {url}")
         req = Request(url=url, headers={"User-Agent": self.user_agent})
         with urlopen(req) as resp:
             if resp.status != 200:
                 raise AIADownloadError(f"HTTP {resp.status} (CA Issuer Cert.)")
-            cert_der = resp.read()
-            # check again if cache_path exists. can have multiple writers
-            if cache_path and not os.path.exists(cache_path):
-                logger.debug("writing cache", cache_path)
-                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                with open(cache_path, "wb") as f:
-                    f.write(cert_der) # write cache
-            #cert = x509.load_der_x509_certificate(cert_der)
-            cert = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, cert_der)
+            cert_bytes = resp.read()
+            # cert_bytes can have different formats: DER = ASN1, CMS = PKCS7 = P7B, PEM
+            # https://tools.ietf.org/html/rfc5280#page-50
+            # https://source.chromium.org/chromium/chromium/src/+/main:net/cert/internal/cert_issuer_source_aia.cc
+            # AiaRequest::AddCompletedFetchToResults
+            cert = self._load_cert_from_bytes(cert_bytes)
+            self._write_cert_cache(url_parsed, cert)
             return cert
 
-    def aia_chase(self, host, timeout=5):
+    def aia_chase(self, host, timeout=5, max_chain_depth=100):
         """
         Get the certificate chain for host,
         up to (and including) the root certificate.
 
         The result is a tuple of
-        0 = cert_chain
-        1 = chain_is_valid
-        2 = missing_certs: extra certs that had to be fetched to verify the chain
+        0 = verified_cert_chain
+        1 = missing_certs: extra certs that had to be fetched to verify the chain
 
         The first cert in cert_chain is the host certificate,
         the next certs are the intermediary certificates,
         the last cert is the root certificate.
         """
 
+        # TODO throw this when an intermediary cert could not be fetched
+        # raise ssl.SSLCertVerificationError("unable to get local issuer certificate")
+
+        # TODO throw a different error when the root cert is not trusted
+
+        # note: at this point, verified_cert_chain can be not-yet fully verified.
+        # it is not-yet fully verified when the last cert is not a trusted root cert.
         verified_cert_chain, rest_cert_chain = self.get_host_cert_chain(host, timeout)
 
         # TODO what to do with rest_cert_chain
+        # avoid fetching certs if we have them already
 
         # debug
         def print_chain(cert_chain):
@@ -243,40 +399,65 @@ class AIASession:
         # the first cert (leaf cert) is always in verified_cert_chain
         if not verified_cert_chain:
             # no certs were received
-            return None, None, None
+            # TODO throw error?
+            # assuming the user wants to establish a TLS connection
+            # but the server did return no certificates
+            return None, None
 
         # chase: fetch missing certs
 
+        """
+        https://groups.google.com/a/chromium.org/g/net-dev/c/H-ysp5UM_rk
+        if the result returned by VerifyX509CertChain() is CERT_VERIFY_STATUS_ANDROID_NO_TRUSTED_ROOT,
+        then we check if an AIA extension is present in the last certificate in the provided chain.
+        If so, enter the following loop:
+        - Create a new AIARequest and call Start() and then Wait() on it.
+        - If the result of the request is an error,
+          then return the previous error from the last call to VerifyX509CertChain().
+        - Parse the result as an X509Certificate.
+          If it successfully parses, then construct a new certificate with the previous certificate chain
+          with the newly fetched intermediate appended and call VerifyX509CertChain() on it.
+        - If the result is still CERT_VERIFY_STATUS_ANDROID_NO_TRUSTED_ROOT,
+          then loop, up to a maximum number of intermediate fetches.
+        """
+
         #store = OpenSSL.crypto.X509Store()
-        # local cert store so we can add certs
+        # local cert store so we can add temporary certs
         store = self._context.get_cert_store()
 
         # verified_cert_chain[0:-1] certs are verified
         # verified_cert_chain[-1] cert is not verified
 
-        # https://github.com/pyca/pyopenssl/pull/948
-        #issuer_certs = []
+        cert = verified_cert_chain[-1] # not verified
 
-        max_chain_depth = 123
+        missing_certs = []
 
         for verify_chain_idx in range(max_chain_depth):
 
-            cert = verified_cert_chain[-1] # not verified
+            print("cert subject", cert.get_subject())
+            print("cert issuer ", cert.get_issuer())
 
             aia_ca_issuers = get_ca_issuers_of_cert(cert)
             print("aia_ca_issuers", aia_ca_issuers)
+            if len(aia_ca_issuers) == 0:
+                raise Exception("unable to get local issuer certificate. cert has no aia_ca_issuers")
             assert len(aia_ca_issuers) > 0
+            #assert len(aia_ca_issuers) == 1 # ?
             issuer_cert = self._get_ca_issuer_cert(aia_ca_issuers[0])
             print("issuer_cert subject", issuer_cert.get_subject())
             print("issuer_cert issuer ", issuer_cert.get_issuer())
-            #issuer_certs.append(issuer_cert)
-            issuer_certs = [issuer_cert]
+            missing_certs.append(issuer_cert)
+            #missing_certs = [issuer_cert]
+
+            print("missing_certs"); print_chain(missing_certs)
 
             # verify this cert
             #while True:
             #for i in range(2):
             #print("verify try", i)
-            ctx = OpenSSL.crypto.X509StoreContext(store, cert, issuer_certs)
+            # https://github.com/pyca/pyopenssl/pull/948
+            ctx = OpenSSL.crypto.X509StoreContext(store, cert, missing_certs)
+            #ctx = OpenSSL.crypto.X509StoreContext(store, cert, [issuer_cert])
             try:
                 ctx.verify_certificate()
                 print("cert is valid. full chain is valid, no missing certs were fetched")
@@ -285,61 +466,27 @@ class AIASession:
                 #verified_cert_chain.append(issuer_cert.to_cryptography())
                 verified_cert_chain.append(issuer_cert)
                 verified_cert_chain = list(map(lambda c: c.to_cryptography(), verified_cert_chain))
-                return verified_cert_chain, True, issuer_certs
+                return verified_cert_chain, missing_certs
             except OpenSSL.crypto.X509StoreContextError as exc:
+                if exc.errors[0] == 20:
+                    # exc.errors [20, 1, 'unable to get local issuer certificate']
+                    print("chain is not complete -> continuing chase")
+                    #import time; time.sleep(5)
+                    cert = issuer_cert
+                    continue
+                if exc.errors[0] == 19:
+                    # exc.errors [19, 1, 'self-signed certificate in certificate chain']
+                    print("chain ends with untrusted root cert")
+                    raise
                 print("exc.args", exc.args)
                 print("exc.certificate", exc.certificate)
                 print("exc.errors", exc.errors)
                 print("exc str", str(exc))
-
                 raise
 
-                '''
-                if exc.errors[0] == 20: # unable to get local issuer certificate
-                    # still cannot verify this cert
-                    raise
-                elif exc.errors[0] == 18: # self-signed certificate
-                    # this root cert is not in ca-bundle.crt
-                    # TODO let the user decide whether to trust this root cert
-                    raise
-                else:
-                    raise
-                '''
-
-            # ?
-            #verified_cert_chain.append(issuer_cert.to_cryptography())
-
-            '''
-            # unable to get local issuer certificate
-            print("todo fetch")
-
-            #if exc.args[0] != "unable to get local issuer certificate":
-            #    raise exc
-
-            # assert exc.args[0] == "unable to get local issuer certificate"
-            # exc.errors == [20, 0, 'unable to get local issuer certificate']
-
-            # exc.args ('self-signed certificate',)
-            # exc.errors [18, 0, 'self-signed certificate']
-
-            #pass
-
-            # cert: unable to get local issuer certificate
-            # fetch issuer cert
-
-            #cert_issuer = cert.get_issuer()
-            #cert_fingerprint = cert.digest("sha1")
-
-            # TODO remove openssl_get_cert_info
-            # use only get_ca_issuers_of_cert
-            aia_ca_issuers = get_ca_issuers_of_cert(cert)
-            print("aia_ca_issuers", aia_ca_issuers)
-            assert len(aia_ca_issuers) > 0
-            issuer_cert = self._get_ca_issuer_cert(aia_ca_issuers[0])
-            print("issuer_cert", issuer_cert)
-            issuer_certs.append(issuer_cert)
-            # retry validation
-            '''
+        # on success, we return from the previous for loop
+        # TODO use a more specific exception
+        raise Exception("exceeded max_chain_depth")
 
         ###############
 
@@ -471,9 +618,8 @@ class AIASession:
 
         print("cadata_and_host_regex_from_host cache miss")
 
-        cert_chain, chain_is_valid, missing_certs = self.aia_chase(host, timeout)
-
-        assert chain_is_valid
+        # note: this can throw
+        cert_chain, missing_certs = self.aia_chase(host, timeout)
 
         target_cert = cert_chain[0]
         #target_cert = target_cert.to_cryptography()
