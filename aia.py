@@ -89,7 +89,6 @@ class CachedMethod:
 
 
 def get_cn_of_name(name):
-    # https://cryptography.io/en/latest/x509/reference/#cryptography.x509.Name
     for attr in name:
         if attr.rfc4514_attribute_name == "CN":
             return attr.value
@@ -104,7 +103,6 @@ def get_ca_issuers_of_cert(cert):
         )
     except x509.extensions.ExtensionNotFound:
         return []
-    # https://cryptography.io/en/latest/x509/reference/#cryptography.x509.AccessDescription
     ca_issuers = []
     for access_description in aia_extension.value:
         if access_description.access_method._name == "caIssuers":
@@ -217,7 +215,7 @@ class AIASession:
             # this does not mean that the chain is valid
             # the server can return only 1 cert
             return verified_cert_chain, None
-        rest_cert_chain = full_cert_chain[len(verified_cert_chain) :]
+        rest_cert_chain = full_cert_chain[len(verified_cert_chain):]
         return verified_cert_chain, rest_cert_chain
 
     def _init_cache_db(self):
@@ -327,14 +325,13 @@ class AIASession:
         #    raise
 
         # try to load PKCS7 format
-        # https://source.chromium.org/chromium/chromium/src/+/main:net/cert/internal/cert_issuer_source_aia.cc
-        # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/serialization/#pkcs7
+        # https://source.chromium.org/chromium/chromium/src/
+        #   net/cert/internal/cert_issuer_source_aia.cc
+        # https://cryptography.io/ # pkcs7
         # ParseCertsFromCms
 
         # try to load PKCS7-DER format
         try:
-            # FIXME AttributeError: module 'cryptography.hazmat.primitives.serialization' has no attribute 'pkcs7'. Did you mean: 'pkcs12'?
-            # cryptography-42.0.5
             certs = pkcs7.load_der_pkcs7_certificates(cert_bytes)
             assert len(certs) == 1  # TODO
             cert = certs[0]
@@ -407,7 +404,8 @@ class AIASession:
             cert_bytes = resp.read()
             # cert_bytes can have different formats: DER = ASN1, CMS = PKCS7 = P7B, PEM
             # https://tools.ietf.org/html/rfc5280#page-50
-            # https://source.chromium.org/chromium/chromium/src/+/main:net/cert/internal/cert_issuer_source_aia.cc
+            # https://source.chromium.org/chromium/chromium/src/
+            #   net/cert/internal/cert_issuer_source_aia.cc
             # AiaRequest::AddCompletedFetchToResults
             cert = self._load_cert_from_bytes(cert_bytes)
             self._write_cert_cache(url_parsed, cert)
@@ -438,13 +436,14 @@ class AIASession:
             )
         except cryptography.x509.extensions.ExtensionNotFound:
             raise ValueError("must be a CA cert")
-        if ext_bc.value.ca != True:
+        if not ext_bc.value.ca:
             raise ValueError("must be a CA cert")
         if cert.get_issuer() != cert.get_subject():
             raise ValueError("must be a self-signed cert")
         # no. this only works with cryptography certs
         """
-        # note: this check uses cert.__eq__ ("semantic equality") so no need for pointer equality
+        # note: this check uses cert.__eq__ ("semantic equality")
+        #   so no need for pointer equality
         if cert in self._trusted_root_certs:
             return False
         """
@@ -543,21 +542,7 @@ class AIASession:
             return verified_cert_chain, None
 
         # chase: fetch missing certs
-
-        """
-        https://groups.google.com/a/chromium.org/g/net-dev/c/H-ysp5UM_rk
-        if the result returned by VerifyX509CertChain() is CERT_VERIFY_STATUS_ANDROID_NO_TRUSTED_ROOT,
-        then we check if an AIA extension is present in the last certificate in the provided chain.
-        If so, enter the following loop:
-        - Create a new AIARequest and call Start() and then Wait() on it.
-        - If the result of the request is an error,
-          then return the previous error from the last call to VerifyX509CertChain().
-        - Parse the result as an X509Certificate.
-          If it successfully parses, then construct a new certificate with the previous certificate chain
-          with the newly fetched intermediate appended and call VerifyX509CertChain() on it.
-        - If the result is still CERT_VERIFY_STATUS_ANDROID_NO_TRUSTED_ROOT,
-          then loop, up to a maximum number of intermediate fetches.
-        """
+        # https://groups.google.com/a/chromium.org/g/net-dev/c/H-ysp5UM_rk
 
         # store = OpenSSL.crypto.X509Store()
         # local cert store so we can add temporary certs
@@ -604,10 +589,12 @@ class AIASession:
             # https://github.com/pyca/pyopenssl/pull/948
             ctx = OpenSSL.crypto.X509StoreContext(store, cert, missing_certs)
             # no. this adds *untrusted* certs
-            # ctx = OpenSSL.crypto.X509StoreContext(store, cert, self._trusted_root_certs + missing_certs)
+            # ctx = OpenSSL.crypto.X509StoreContext(
+            #     store, cert, self._trusted_root_certs + missing_certs)
             try:
                 ctx.verify_certificate()
-                # print("cert is valid. full chain is valid, no missing certs were fetched")
+                # print("cert is valid. full chain is valid, "
+                #     "no missing certs were fetched")
                 # cert is valid
                 # full chain is valid, no missing certs were fetched
                 # verified_cert_chain.append(issuer_cert.to_cryptography())
@@ -626,7 +613,8 @@ class AIASession:
                 if exc.errors[0] == 19:
                     # exc.errors [19, 1, 'self-signed certificate in certificate chain']
                     print(
-                        "chain ends with untrusted root cert. hint: aia_session.add_trusted_root_cert(cert)"
+                        "chain ends with untrusted root cert. "
+                        "hint: aia_session.add_trusted_root_cert(cert)"
                     )
                     raise
                 print("exc.args", exc.args)
@@ -639,110 +627,6 @@ class AIASession:
         # TODO use a more specific exception
         raise Exception("exceeded max_chain_depth")
 
-        ###############
-
-        """
-
-        print("mmkay")
-
-        raise 123
-
-        # get_peer_cert_chain
-        # get_verified_chain
-        # add_extra_chain_cert(certobj)
-
-        # TODO validate chain, step by step
-
-        der_cert = cert_chain[0]
-        der_cert_was_fetched = False
-
-        # Traverse the AIA path until it gets a self-signed certificate
-        # or a certificate without a "parent" issuer URI reference
-        while True:
-            cert_dict = openssl_get_cert_info(der_cert)
-            cert_issuer = cert_dict["issuer"]
-            print("cert_issuer", cert_issuer, cert_issuer in self._trusted)
-            if cert_dict["subject"] == cert_issuer:  # Self-signed (root) cert # is this enough?
-                if cert_issuer not in self._trusted:
-                    raise InvalidCAError("Root in AIA but not in trusted list")
-                # is this enough?
-                logger.debug(f"Found a self-signed (root) certificate for "
-                             f"{host} in AIA, and it's also in trusted list!")
-                yield (self._trusted[cert_issuer], False)
-                return
-            yield (der_cert, der_cert_was_fetched)
-
-            if cert_issuer in self._trusted:
-                # is this enough?
-                yield (self._trusted[cert_issuer], False)
-                return
-
-            if not cert_dict["aia_ca_issuers"]: # FIXME wrong condition?
-                if cert_issuer not in self._trusted:
-                    raise InvalidCAError("Root not in trusted database")
-                logger.debug(f"Found the {host} certificate root!")
-                yield (self._trusted[cert_issuer], False)
-                return
-            logger.debug(f"Found another {host} certificate chain entry (AIA)")
-            print(f"Found another {host} certificate chain entry (AIA)")
-            der_cert = self._get_ca_issuer_cert(cert_dict["aia_ca_issuers"][0])
-            der_cert_was_fetched = True
-        """
-
-    # TODO remove?
-    def validate_certificate_chain(self, certs):
-        """
-        Validate a given certificate chain which should be full,
-        as a list of DER (binary) certificates from leaf to root
-        (in this order and including both),
-        raising an ``ssl.SSLError`` when the chain isn't valid.
-        """
-        target_cert = certs[0]
-        intermediary_cert_list = certs[1:-1]
-        root_cert = certs[-1]
-
-        # https://cryptography.io/en/latest/x509/verification/
-
-        """
-        # prefer os.environ.get("SSL_CERT_FILE")
-        # or "SYSTEM_CERTIFICATE_PATH"
-        # /nix/store/ad8lpasryg34dv93h3n359bri176pj56-nss-cacert-3.98/etc/ssl/certs/ca-bundle.crt
-
-        #print("certifi.where()", certifi.where())
-        # /nix/store/ad8lpasryg34dv93h3n359bri176pj56-nss-cacert-3.98/etc/ssl/certs/ca-bundle.crt
-
-        ca_bundle_path = (
-            os.environ.get("SSL_CERT_FILE") or
-            os.environ.get("SYSTEM_CERTIFICATE_PATH") or
-            certifi.where()
-        )
-        """
-
-        ca_bundle_path = self.cafile
-
-        with open(ca_bundle_path, "rb") as pems:
-            store = x509.verification.Store(
-                x509.load_pem_x509_certificates(pems.read())
-            )
-
-        builder = x509.verification.PolicyBuilder().store(store)
-
-        target_name = get_cn_of_name(target_cert.subject)  # can be "*.example.com"
-        target_name = target_name.replace(
-            "*", "x"
-        )  # fix: ValueError: invalid domain name
-        target_subject = x509.DNSName(target_name)
-
-        verifier = builder.build_server_verifier(target_subject)
-
-        try:
-            verifier.verify(target_cert, intermediary_cert_list)
-        except x509.verification.VerificationError:
-            raise ssl.SSLError
-        # this should be unreachable since target_name.replace
-        # except x509.UnsupportedGeneralNameType:
-        #    raise ssl.SSLError
-
     def cadata_from_host(self, host, **kwargs):
         """
         Get the certification chain, apart from the leaf node,
@@ -752,6 +636,7 @@ class AIASession:
         cadata, host_regex = self.cadata_and_host_regex_from_host(host, **kwargs)
         return cadata
 
+    # TODO remove?
     def cadata_and_host_regex_from_host(self, host, only_missing=False, timeout=5):
         """
         Get the certification chain and the host regex.
@@ -778,49 +663,10 @@ class AIASession:
         cert_chain, missing_certs = self.aia_chase(host, timeout)
 
         target_cert = cert_chain[0]
-        # target_cert = target_cert.to_cryptography()
-        # print("target_cert", repr(target_cert), dir(target_cert), target_cert.public_bytes(cryptography.hazmat.primitives.serialization.Encoding.PEM))
 
         cadata = "\n".join(
             map(lambda c: c.public_bytes(Encoding.PEM).decode("ascii"), cert_chain)
         )
-
-        """
-        target_name = get_cn_of_name(target_cert.subject).lower() # can be "*.example.com"
-        #target_name = target_cert.get_subject()
-        print("target_name", repr(target_name))
-
-        # host can have port. target_name has no port
-        # port is between 0 and 65535 inclusive
-        host_regex = target_name.replace(".", "\\.").replace("*", ".*") + "(?::[0-9]{1,5})?"
-        host_regex = re.compile(host_regex)
-
-        #print("cert_chain", cert_chain)
-
-        #der_cert_tuples = list(self.aia_chase(host))
-        """
-
-        """
-        der_certs = [t[0] for t in der_cert_tuples]
-
-        der_cert_was_fetched_list = [t[1] for t in der_cert_tuples]
-        print("der_cert_was_fetched_list", der_cert_was_fetched_list)
-
-        # TODO move up to aia_chase
-        #   load cert as soon as possible to avoid double-parsing
-        certs = list(map(x509.load_der_x509_certificate, der_certs))
-
-        logger.info(f"Checking the {host} certificate chain...")
-        self.validate_certificate_chain(certs)
-        logger.info(f"The {host} certificate chain is valid!")
-
-        if only_missing:
-            cadata = "".join(ssl.DER_cert_to_PEM_cert(t[0]) for t in der_cert_tuples[1:] if t[1])
-        else:
-            cadata = "".join(ssl.DER_cert_to_PEM_cert(dc) for dc in der_certs[1:])
-
-        target_cert = certs[0]
-        """
 
         target_name = get_cn_of_name(
             target_cert.subject
