@@ -203,6 +203,35 @@ def run_http_server(args):
 
 
 
+def print_cert(cert, label=None, indent=""):
+    if label:
+        print(indent + label + ":")
+    if isinstance(cert, cryptography.x509.Certificate):
+        # cryptography cert
+        # https://cryptography.io/en/latest/x509/reference/
+        print(indent + f"  subject: {cert.subject}")
+        print(indent + f"  issuer: {cert.issuer})")
+        print(indent + f"  fingerprint: {cert.fingerprint(hashes.SHA256())}")
+        return
+    if isinstance(cert, OpenSSL.crypto.X509):
+        # pyopenssl cert
+        print(indent + f"  subject: {cert.get_subject()}")
+        print(indent + f"  issuer: {cert.get_issuer()})")
+        print(indent + f'  fingerprint: {cert.digest("sha256")}')
+        return
+    raise ValueError("unknown cert type {type(cert)}")
+
+
+
+def print_chain(cert_chain):
+    if not cert_chain:
+        print("  (empty)")
+        return
+    for (idx, cert) in enumerate(cert_chain):
+        print_cert(cert, f"cert {idx}", "  ")
+
+
+
 def run_test(tmpdir):
 
     print(f"using tempdir {repr(tmpdir)}")
@@ -328,43 +357,16 @@ def run_test(tmpdir):
 
     atexit.register(handle_exit)
 
-    #print("todo run tests")
-    #time.sleep(60)
-
     print("aia tests ...")
 
     print("creating aia_session")
     aia_session = aia.AIASession()
 
-    def print_cert(cert, label=None, indent=""):
-        if label:
-            print(indent + label + ":")
-        if isinstance(cert, cryptography.x509.Certificate):
-            # cryptography cert
-            # https://cryptography.io/en/latest/x509/reference/
-            print(indent + f"  subject: {cert.subject}")
-            print(indent + f"  issuer: {cert.issuer})")
-            print(indent + f"  fingerprint: {cert.fingerprint(hashes.SHA256())}")
-            return
-        if isinstance(cert, OpenSSL.crypto.X509):
-            # pyopenssl cert
-            print(indent + f"  subject: {cert.get_subject()}")
-            print(indent + f"  issuer: {cert.get_issuer()})")
-            print(indent + f'  fingerprint: {cert.digest("sha256")}')
-            return
-        raise ValueError("unknown cert type {type(cert)}")
-
-    def print_chain(cert_chain):
-        if not cert_chain:
-            print("  (empty)")
-            return
-        for (idx, cert) in enumerate(cert_chain):
-            print_cert(cert, f"cert {idx}", "  ")
-
     print("aia_session.aia_chase ...")
 
     print("-" * 80)
 
+    # now aia_chase should fail
     test_name = "aia_session.aia_chase with untrusted root cert..."
     print(f"{test_name} ...")
     url = https_server_url
@@ -386,15 +388,6 @@ def run_test(tmpdir):
         # assert that equality check is used
         cert_list = [cert0]
         assert cert in cert_list
-
-    except Exception as exc:
-        print("FIXME got unexpected exception:")
-        print("exc.args", exc.args)
-        print("exc.certificate", exc.certificate)
-        print("exc.errors", exc.errors)
-        print("exc str", str(exc))
-        print("exc dir", dir(exc))
-        raise
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -420,11 +413,12 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
-    assert aia_session.add_trusted_root_cert(cert0) == False # already exists
+    assert aia_session.add_trusted_root_cert(cert0) == False # already added
     print(f"{test_name} ok")
 
     print("-" * 80)
 
+    # now aia_chase should work
     test_name = "aia_session.aia_chase with trusted root cert"
     print(f"{test_name} ...")
     url = https_server_url
@@ -437,12 +431,48 @@ def run_test(tmpdir):
         )
         #print("verified_cert_chain"); print_chain(verified_cert_chain)
         #print("missing_certs"); print_chain(missing_certs)
+    except Exception:
+        raise
     print(f"{test_name} ok")
 
     print("-" * 80)
 
-    # TODO test
-    # aia_session.remove_trusted_root_cert(cert0)
+    test_name = "aia_session.remove_trusted_root_cert"
+    print(f"{test_name} ...")
+    print_cert(cert0, "cert0")
+    assert aia_session.remove_trusted_root_cert(cert0) == True
+    assert aia_session.remove_trusted_root_cert(cert0) == False # already removed
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # now aia_chase should fail again
+    test_name = "aia_session.aia_chase with untrusted root cert..."
+    print(f"{test_name} ...")
+    url = https_server_url
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=5, max_chain_depth=100,
+        )
+    except OpenSSL.crypto.X509StoreContextError as exc:
+        # print("exc.errors", exc.errors)
+        # exc.errors [19, 1, 'self-signed certificate in certificate chain']
+        assert exc.errors[0] == 19
+        cert = exc.certificate.to_cryptography()
+        # assert different objects, but same content
+        assert id(cert) != id(cert0) # no pointer equality
+        assert cert == cert0 # "semantic equality"
+        # assert that equality check is used
+        cert_list = [cert0]
+        assert cert in cert_list
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # TODO test download fail
 
     '''
     except Exception as exc:

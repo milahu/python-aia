@@ -425,7 +425,7 @@ class AIASession:
         len1 = len(self._trusted_root_certs)
         self._trusted_root_certs = list(filter(
             lambda c: c.digest("sha256") != cert_digest,
-            self._trusted_root_certs.append
+            self._trusted_root_certs
         ))
         len2 = len(self._trusted_root_certs)
         return len1 != len2 # return True if cert was removed
