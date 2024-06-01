@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import random
 import atexit
+import signal
 from multiprocessing import Process
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import ssl
@@ -327,6 +328,8 @@ def run_test(tmpdir):
     )
     http_server_process = Process(target=run_http_server, args=(http_server_args,))
     http_server_process.start()
+    http_server_process.stop = lambda: os.kill(http_server_process.pid, signal.SIGSTOP)
+    http_server_process.cont = lambda: os.kill(http_server_process.pid, signal.SIGCONT)
 
     # start https server
     schema = "https"
@@ -343,6 +346,8 @@ def run_test(tmpdir):
     )
     https_server_process = Process(target=run_http_server, args=(https_server_args,))
     https_server_process.start()
+    https_server_process.stop = lambda: os.kill(https_server_process.pid, signal.SIGSTOP)
+    https_server_process.cont = lambda: os.kill(https_server_process.pid, signal.SIGCONT)
 
     def handle_exit():
         process_list = [
@@ -367,7 +372,7 @@ def run_test(tmpdir):
     print("-" * 80)
 
     # now aia_chase should fail
-    test_name = "aia_session.aia_chase with untrusted root cert..."
+    test_name = "aia_session.aia_chase with untrusted root cert"
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
@@ -375,7 +380,7 @@ def run_test(tmpdir):
     #print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=5, max_chain_depth=100,
+            host, timeout=1, max_chain_depth=100,
         )
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
@@ -427,7 +432,7 @@ def run_test(tmpdir):
     #print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=5, max_chain_depth=100,
+            host, timeout=1, max_chain_depth=100,
         )
         #print("verified_cert_chain"); print_chain(verified_cert_chain)
         #print("missing_certs"); print_chain(missing_certs)
@@ -447,7 +452,7 @@ def run_test(tmpdir):
     print("-" * 80)
 
     # now aia_chase should fail again
-    test_name = "aia_session.aia_chase with untrusted root cert..."
+    test_name = "aia_session.aia_chase with untrusted root cert"
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
@@ -455,7 +460,7 @@ def run_test(tmpdir):
     #print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=5, max_chain_depth=100,
+            host, timeout=1, max_chain_depth=100,
         )
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
@@ -472,7 +477,93 @@ def run_test(tmpdir):
 
     print("-" * 80)
 
-    # TODO test download fail
+    test_name = "aia_session.add_trusted_root_cert"
+    print(f"{test_name} ...")
+    print_cert(cert0, "cert0")
+    assert aia_session.add_trusted_root_cert(cert0) == True
+    assert aia_session.add_trusted_root_cert(cert0) == False # already added
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # now aia_chase should work again
+    test_name = "aia_session.aia_chase with trusted root cert"
+    print(f"{test_name} ...")
+    url = https_server_url
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        # FIXME Exception: unable to get local issuer certificate. cert has no aia_ca_issuers
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=1, max_chain_depth=100,
+        )
+        #print("verified_cert_chain"); print_chain(verified_cert_chain)
+        #print("missing_certs"); print_chain(missing_certs)
+    except Exception:
+        raise
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # TODO test max_chain_depth=1
+
+    test_name = "aia_session.aia_chase with stopped http server"
+    print(f"{test_name} ...")
+    # stop http server
+    http_server_process.stop()
+    # create new session to drop cache
+    print("destroying aia_session")
+    del aia_session
+    print("creating aia_session")
+    aia_session = aia.AIASession()
+    # now aia_chase should fail
+    url = https_server_url
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=1, max_chain_depth=100,
+        )
+        #print("verified_cert_chain"); print_chain(verified_cert_chain)
+        #print("missing_certs"); print_chain(missing_certs)
+    except TimeoutError:
+        pass
+    # FIXME BrokenPipeError from http server
+    http_server_process.cont()
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    test_name = "aia_session.aia_chase with stopped https server"
+    print(f"{test_name} ...")
+    # stop https server
+    https_server_process.stop()
+    # create new session to drop cache
+    print("destroying aia_session")
+    del aia_session
+    print("creating aia_session")
+    aia_session = aia.AIASession()
+    # now aia_chase should fail
+    url = https_server_url
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=1, max_chain_depth=100,
+        )
+        #print("verified_cert_chain"); print_chain(verified_cert_chain)
+        #print("missing_certs"); print_chain(missing_certs)
+    except TimeoutError:
+        pass
+    https_server_process.cont()
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # TODO test max_chain_depth=1
 
     '''
     except Exception as exc:

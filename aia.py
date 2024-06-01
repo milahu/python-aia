@@ -6,6 +6,7 @@ import logging
 import re
 import socket
 import ssl
+import select
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen, Request
 from urllib.parse import urlsplit
@@ -21,6 +22,8 @@ from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.hazmat.primitives import hashes
 
 import certifi
+
+import timeout_decorator
 
 
 __version__ = "0.2.0"
@@ -188,7 +191,15 @@ class AIASession:
         conn.connect((host, port))
         conn.setblocking(1)
         conn.set_tlsext_host_name(host.encode())
-        conn.do_handshake()
+
+        # add timeout to conn.do_handshake
+        # https://github.com/pyca/pyopenssl/issues/168
+        @timeout_decorator.timeout(timeout, timeout_exception=TimeoutError)
+        def do_handshake():
+            conn.do_handshake()
+
+        do_handshake()
+
         full_cert_chain = conn.get_peer_cert_chain()
         verified_cert_chain = conn.get_verified_chain()
         conn.close()
@@ -351,7 +362,7 @@ class AIASession:
         raise Exception(f"failed to parse cert from {url}. cert_bytes: {cert_bytes.hex()}")
 
     @CachedMethod
-    def _get_ca_issuer_cert(self, url):
+    def _get_ca_issuer_cert(self, url, timeout=5):
         """
         Get an intermediary DER (binary) certificate in the chain
         from a given URL which should had been found
@@ -367,7 +378,8 @@ class AIASession:
             return cert
         logger.debug(f"Downloading CA issuer certificate from {url}")
         req = Request(url=url, headers={"User-Agent": self.user_agent})
-        with urlopen(req) as resp:
+        # TODO async? asyncio + aiohttp
+        with urlopen(req, timeout=timeout) as resp:
             if resp.status != 200:
                 raise AIADownloadError(f"HTTP {resp.status} (CA Issuer Cert.)")
             cert_bytes = resp.read()
@@ -486,6 +498,17 @@ class AIASession:
             # but the server did return no certificates
             return None, None
 
+        def is_root_cert(cert):
+            if cert.get_subject() != cert.get_issuer():
+                return False
+            return True
+
+        # TODO test with self-signed leaf cert. require len > 1?
+        # check if verified_cert_chain is complete
+        cert = verified_cert_chain[-1]
+        if is_root_cert(cert):
+            return verified_cert_chain, None
+
         # chase: fetch missing certs
 
         """
@@ -530,7 +553,7 @@ class AIASession:
                 raise Exception("unable to get local issuer certificate. cert has no aia_ca_issuers")
             assert len(aia_ca_issuers) > 0
             #assert len(aia_ca_issuers) == 1 # ?
-            issuer_cert = self._get_ca_issuer_cert(aia_ca_issuers[0])
+            issuer_cert = self._get_ca_issuer_cert(aia_ca_issuers[0], timeout)
             print("issuer_cert subject", issuer_cert.get_subject())
             print("issuer_cert issuer ", issuer_cert.get_issuer())
             missing_certs.append(issuer_cert)
