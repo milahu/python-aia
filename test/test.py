@@ -6,10 +6,12 @@ import time
 import subprocess
 import tempfile
 import random
+import atexit
 from multiprocessing import Process
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import ssl
 import datetime
+from urllib.parse import urlsplit
 
 import OpenSSL
 print("imported OpenSSL module", OpenSSL)
@@ -63,7 +65,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 
-def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None):
+def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, is_leaf=False):
 
     """
     create a cryptography certificate and key.
@@ -76,8 +78,13 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None):
     # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-builder
     # https://stackoverflow.com/questions/56285000/python-cryptography-create-a-certificate-signed-by-an-existing-ca-and-export
 
+    is_root = issuer_cert is None
+
     key = rsa.generate_private_key(
         public_exponent=65537,
+        # key_size=2048 is slow, but python requires 2048 bit RSA keys
+        # https://github.com/python/cpython/raw/main/Modules/_ssl.c
+        # @SECLEVEL=2: security level 2 with 112 bits minimum security (e.g. 2048 bits RSA key)
         key_size=2048,
         backend=default_backend()
     )
@@ -90,8 +97,7 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None):
         x509.NameAttribute(NameOID.COMMON_NAME, name),
     ])
 
-    # root cert: issuer == subject
-    issuer_name = issuer_cert.subject if issuer_cert else subject_name
+    issuer_name = subject_name if is_root else issuer_cert.subject
 
     cert = x509.CertificateBuilder()
 
@@ -102,7 +108,11 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None):
     cert = cert.not_valid_before(datetime.datetime.utcnow())
     cert = cert.not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
 
-    if not issuer_cert:
+    # FIXME invalid CA certificate @ ctx.verify_certificate()
+
+    # https://stackoverflow.com/a/72320618/10440128
+    #if not is_leaf: # no. certificate signature failure
+    if is_root:
         cert = cert.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
 
     if issuer_cert_url:
@@ -168,8 +178,7 @@ def run_test(tmpdir):
     # create certs
     # TODO refactor ... create_cert_chain
 
-    # FIXME trust the root cert
-    # OpenSSL.crypto.X509StoreContextError: self-signed certificate in certificate chain
+    # FIXME invalid CA certificate @ ctx.verify_certificate()
 
     cert0, key0 = create_cert("root cert")
     with open(f"{server_root}/cert0", "wb") as f:
@@ -215,7 +224,7 @@ def run_test(tmpdir):
 
     # TODO test invalid url3 with invalid host or port
 
-    cert4, key4 = create_cert("leaf cert", cert3, key3, url3)
+    cert4, key4 = create_cert("leaf cert", cert3, key3, url3, is_leaf=True)
 
     server_cert, server_key = cert4, key4
 
@@ -268,24 +277,165 @@ def run_test(tmpdir):
     https_server_process = Process(target=run_http_server, args=(https_server_args,))
     https_server_process.start()
 
+    def handle_exit():
+        process_list = [
+            http_server_process,
+            https_server_process,
+        ]
+        for process in process_list:
+            try:
+                process.kill()
+            except Exception:
+                pass
+
+    atexit.register(handle_exit)
+
     #print("todo run tests")
     #time.sleep(60)
 
-    print("starting aia tests")
+    print("aia tests ...")
 
     print("creating aia_session")
     aia_session = aia.AIASession()
 
-    print("aia_session.cadata_from_url")
+    def print_chain(cert_chain):
+        if not cert_chain:
+            print("  (empty)")
+            return
+        for (idx, cert) in enumerate(cert_chain):
+            print(f"  {idx} subject: {cert.get_subject()}")
+            print(f"    issuer: {cert.get_issuer()})")
+            print(f'    fingerprint: {cert.digest("sha1")}')
+
+    def print_cert(cert, label=None):
+        if label:
+            print(label + ":")
+        if isinstance(cert, cryptography.x509.Certificate):
+            # cryptography cert
+            # https://cryptography.io/en/latest/x509/reference/
+            print(f"  subject: {cert.subject}")
+            print(f"    issuer: {cert.issuer})")
+            print(f"    fingerprint: {cert.fingerprint(hashes.SHA256())}")
+            return
+        if isinstance(cert, OpenSSL.crypto.X509):
+            # pyopenssl cert
+            print(f"  subject: {cert.get_subject()}")
+            print(f"    issuer: {cert.get_issuer()})")
+            print(f'    fingerprint: {cert.digest("sha256")}')
+            return
+        raise ValueError("unknown cert type {type(cert)}")
+
+    print("aia_session.aia_chase ...")
+
+    print("-" * 80)
+
+    test_name = "aia_session.aia_chase with untrusted root cert..."
+    print(f"{test_name} ...")
     url = https_server_url
-    cadata = aia_session.cadata_from_url(url)
-    print(cadata)
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=5, max_chain_depth=100,
+        )
+    except OpenSSL.crypto.X509StoreContextError as exc:
+        # print("exc.errors", exc.errors)
+        # exc.errors [19, 1, 'self-signed certificate in certificate chain']
+        assert exc.errors[0] == 19
+        cert = exc.certificate.to_cryptography()
+        # assert different objects, but same content
+        assert id(cert) != id(cert0) # no pointer equality
+        assert cert == cert0 # "semantic equality"
+        # assert that equality check is used
+        cert_list = [cert0]
+        assert cert in cert_list
 
-    print("done aia tests")
+    except Exception as exc:
+        print("FIXME got unexpected exception:")
+        print("exc.args", exc.args)
+        print("exc.certificate", exc.certificate)
+        print("exc.errors", exc.errors)
+        print("exc str", str(exc))
+        print("exc dir", dir(exc))
+        raise
+    print(f"{test_name} ok")
 
-    print(f"stopping {schema} server ...")
-    https_server_process.join()
-    print(f"stopping {schema} server done")
+    print("-" * 80)
+
+    test_name = "aia_session.add_trusted_root_cert with non-root cert"
+    print(f"{test_name} ...")
+    try:
+        aia_session.add_trusted_root_cert(cert1)
+        #raise ValueError("must be a CA cert")
+    except ValueError as exc:
+        assert str(exc) == "must be a CA cert"
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    test_name = "aia_session.add_trusted_root_cert"
+    print(f"{test_name} ...")
+    assert aia_session.add_trusted_root_cert(cert0) == True
+    assert aia_session.add_trusted_root_cert(cert0) == False # already exists
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    test_name = "aia_session.aia_chase with trusted root cert"
+    print(f"{test_name} ...")
+    url = https_server_url
+    url_parsed = urlsplit(url)
+    host = url_parsed.netloc # note: netloc is host and port
+    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    try:
+        verified_cert_chain, missing_certs = aia_session.aia_chase(
+            host, timeout=5, max_chain_depth=100,
+        )
+        print("verified_cert_chain"); print_chain(verified_cert_chain)
+        print("missing_certs"); print_chain(missing_certs)
+    except Exception as exc:
+        print("FIXME got unexpected exception:")
+        print("exc.args", exc.args)
+        print("exc.certificate", exc.certificate)
+        print("exc.errors", exc.errors)
+        print("exc str", str(exc))
+        print("exc dir", dir(exc))
+        raise
+        """
+        FIXME got unexpected exception:
+        exc.args ('self-signed certificate in certificate chain',)
+        exc.certificate <OpenSSL.crypto.X509 object at 0x7f5876cf8b10>
+        exc.errors [19, 2, 'self-signed certificate in certificate chain']
+        exc str self-signed certificate in certificate chain
+        """
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    # TODO test
+    # aia_session.remove_trusted_root_cert(cert0)
+
+    print("aia_session.aia_chase done")
+
+    """
+    print("aia_session.cadata_from_url ...")
+    url = https_server_url
+    try:
+        cadata = aia_session.cadata_from_url(url)
+        print(cadata)
+    except Exception as exc:
+        print("FIXME got unexpected exception:")
+        print("exc str", str(exc))
+    print("aia_session.cadata_from_url done")
+    """
+
+    print("aia tests done")
+
+    print(f"cleanup")
+    handle_exit()
+
+    print("done")
 
 
 
