@@ -16,9 +16,11 @@ import datetime
 from urllib.parse import urlsplit
 
 import OpenSSL
+
 print("imported OpenSSL module", OpenSSL)
 
 import cryptography
+
 print("imported cryptography module", cryptography)
 
 from cryptography import x509
@@ -30,23 +32,24 @@ from cryptography.hazmat.primitives.serialization import pkcs7
 
 sys.path.append(os.path.dirname(__file__) + "/..")
 import aia
+
 print("imported aia module", aia)
 
 # pyppeteer/util.py
 import gc
 import socket
+
+
 def get_free_port() -> int:
     """Get free port."""
     sock = socket.socket()
-    #sock.bind(('localhost', 0))
-    sock.bind(('127.0.0.1', 0))
+    # sock.bind(('localhost', 0))
+    sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     sock.close()
     del sock
     gc.collect()
     return port
-
-
 
 
 from cryptography import x509
@@ -66,9 +69,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 
-
-def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, is_leaf=False):
-
+def create_cert(
+    name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, is_leaf=False
+):
     """
     create a cryptography certificate and key.
 
@@ -90,16 +93,18 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
         # https://github.com/python/cpython/raw/main/Modules/_ssl.c
         # @SECLEVEL=2: security level 2 with 112 bits minimum security (e.g. 2048 bits RSA key)
         key_size=2048,
-        backend=default_backend()
+        backend=default_backend(),
     )
 
-    subject_name = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, u"US"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Texas"),
-        x509.NameAttribute(NameOID.LOCALITY_NAME, u"Austin"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"My Company"),
-        x509.NameAttribute(NameOID.COMMON_NAME, name),
-    ])
+    subject_name = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Texas"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "Austin"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "My Company"),
+            x509.NameAttribute(NameOID.COMMON_NAME, name),
+        ]
+    )
 
     issuer_name = subject_name if is_root else issuer_cert.subject
 
@@ -112,7 +117,9 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
     cert = cert.public_key(key.public_key())
     cert = cert.serial_number(x509.random_serial_number())
     cert = cert.not_valid_before(datetime.datetime.utcnow())
-    cert = cert.not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+    cert = cert.not_valid_after(
+        datetime.datetime.utcnow() + datetime.timedelta(days=3650)
+    )
 
     cert = cert.add_extension(
         x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
@@ -120,10 +127,12 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
     )
 
     # https://stackoverflow.com/a/72320618/10440128
-    #if is_root: # no. invalid CA certificate @ cert1
+    # if is_root: # no. invalid CA certificate @ cert1
 
     if not is_leaf:
-        cert = cert.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        cert = cert.add_extension(
+            x509.BasicConstraints(ca=True, path_length=None), critical=True
+        )
         cert = cert.add_extension(
             x509.KeyUsage(
                 digital_signature=True,
@@ -141,17 +150,21 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
     else:
         cert = cert.add_extension(
             x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
-                issuer_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+                issuer_cert.extensions.get_extension_for_class(
+                    x509.SubjectKeyIdentifier
+                ).value
             ),
             critical=False,
         )
 
     if is_leaf:
         cert = cert.add_extension(
-            x509.ExtendedKeyUsage([
-                x509.ExtendedKeyUsageOID.CLIENT_AUTH,
-                x509.ExtendedKeyUsageOID.SERVER_AUTH,
-            ]),
+            x509.ExtendedKeyUsage(
+                [
+                    x509.ExtendedKeyUsageOID.CLIENT_AUTH,
+                    x509.ExtendedKeyUsageOID.SERVER_AUTH,
+                ]
+            ),
             critical=False,
         )
 
@@ -159,19 +172,23 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
         # add AIA extension
         # https://github.com/pyca/cryptography/raw/main/tests/x509/test_x509.py
         # aia = x509.AuthorityInformationAccess
-        cert = cert.add_extension(x509.AuthorityInformationAccess([
-            x509.AccessDescription(
-                x509.oid.AuthorityInformationAccessOID.CA_ISSUERS,
-                x509.UniformResourceIdentifier(issuer_cert_url),
+        cert = cert.add_extension(
+            x509.AuthorityInformationAccess(
+                [
+                    x509.AccessDescription(
+                        x509.oid.AuthorityInformationAccessOID.CA_ISSUERS,
+                        x509.UniformResourceIdentifier(issuer_cert_url),
+                    ),
+                ]
             ),
-        ]), critical=False)
+            critical=False,
+        )
 
     # no. certificate signature failure
-    #cert = cert.sign(key, hashes.SHA256(), default_backend())
+    # cert = cert.sign(key, hashes.SHA256(), default_backend())
     cert = cert.sign(issuer_key, hashes.SHA256(), default_backend())
 
     return cert, key
-
 
 
 def run_http_server(args):
@@ -181,7 +198,7 @@ def run_http_server(args):
     ssl_cert_file = args.get("ssl_cert_file", None)
     ssl_key_file = args.get("ssl_key_file", None)
     root = args.get("root", "/tmp/www")
-    #tmpdir = args.get("tmpdir", "/tmp")
+    # tmpdir = args.get("tmpdir", "/tmp")
 
     # https://stackoverflow.com/questions/22429648/ssl-in-python3-with-httpserver
 
@@ -193,16 +210,17 @@ def run_http_server(args):
 
     if ssl_cert_file and ssl_key_file:
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.check_hostname = False # If set to True, only the hostname that matches the certificate will be accepted
+        ssl_context.check_hostname = False  # If set to True, only the hostname that matches the certificate will be accepted
         # https://docs.python.org/3/library/ssl.html
         # The certfile string must be the path to a single file in PEM format containing the certificate
         # as well as any number of CA certificates needed to establish the certificate’s authenticity.
         # The keyfile string, if present, must point to a file containing the private key.
         ssl_context.load_cert_chain(ssl_cert_file, ssl_key_file)
-        http_server.socket = ssl_context.wrap_socket(http_server.socket, server_side=True)
+        http_server.socket = ssl_context.wrap_socket(
+            http_server.socket, server_side=True
+        )
 
     http_server.serve_forever()
-
 
 
 def print_cert(cert, label=None, indent=""):
@@ -225,14 +243,12 @@ def print_cert(cert, label=None, indent=""):
     raise ValueError("unknown cert type {type(cert)}")
 
 
-
 def print_chain(cert_chain):
     if not cert_chain:
         print("  (empty)")
         return
-    for (idx, cert) in enumerate(cert_chain):
+    for idx, cert in enumerate(cert_chain):
         print_cert(cert, f"cert {idx}", "  ")
-
 
 
 def run_test(tmpdir):
@@ -268,7 +284,7 @@ def run_test(tmpdir):
     # encoding = serialization.Encoding.PEM
     # encoding = serialization.Encoding.DER
     # p7 = pkcs7.serialize_certificates(certs, encoding)
-    #f.write(cert2.public_bytes(encoding=serialization.Encoding.PEM))
+    # f.write(cert2.public_bytes(encoding=serialization.Encoding.PEM))
 
     """
         f.write(pkcs7.serialize_certificates([cert2.to_cryptography()], Encoding.DER))
@@ -284,7 +300,7 @@ def run_test(tmpdir):
     cert2_path = f"{server_root}/cert2"
     with open(cert2_path, "wb") as f:
         # PKCS7-DER format
-        #f.write(pkcs7.serialize_certificates([cert2.to_cryptography()], Encoding.DER))
+        # f.write(pkcs7.serialize_certificates([cert2.to_cryptography()], Encoding.DER))
         f.write(pkcs7.serialize_certificates([cert2], Encoding.DER))
     url2 = f"http://127.0.0.1:{http_port}/cert2"
 
@@ -292,50 +308,56 @@ def run_test(tmpdir):
     cert3_path = f"{server_root}/cert3"
     with open(cert3_path, "wb") as f:
         # PKCS7-PEM format
-        #f.write(pkcs7.serialize_certificates([cert3.to_cryptography()], Encoding.PEM))
+        # f.write(pkcs7.serialize_certificates([cert3.to_cryptography()], Encoding.PEM))
         f.write(pkcs7.serialize_certificates([cert3], Encoding.PEM))
     url3 = f"http://127.0.0.1:{http_port}/cert3"
 
     # TODO test invalid url3 with invalid host or port
 
     # no. pycurl.error: (60, "SSL: certificate subject name 'leaf cert' does not match target host name '127.0.0.1'")
-    #cert4, key4 = create_cert("leaf cert", cert3, key3, url3, is_leaf=True)
+    # cert4, key4 = create_cert("leaf cert", cert3, key3, url3, is_leaf=True)
 
     cert4, key4 = create_cert("127.0.0.1", cert3, key3, url3, is_leaf=True)
-    #cert4_path = f"{server_root}/cert4"
+    # cert4_path = f"{server_root}/cert4"
 
     all_ca_certs = [
-        cert0, # root cert
+        cert0,  # root cert
         cert1,
         cert2,
         cert3,
-        #cert4, # leaf cert
+        # cert4, # leaf cert
     ]
 
     all_ca_certs_pem_path = f"{server_root}/all-certs.pem"
     with open(all_ca_certs_pem_path, "wb") as f:
-        f.write(b"\n".join(map(
-            lambda c: c.public_bytes(encoding=serialization.Encoding.PEM),
-            all_ca_certs
-        )))
+        f.write(
+            b"\n".join(
+                map(
+                    lambda c: c.public_bytes(encoding=serialization.Encoding.PEM),
+                    all_ca_certs,
+                )
+            )
+        )
 
     server_cert, server_key = cert4, key4
 
     https_server_cert_file = tempfile.mktemp(suffix=".pem", prefix="cert-", dir=tmpdir)
     with open(https_server_cert_file, "wb") as f:
-        #cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, server_cert) # pyopenssl
-        cert_pem = server_cert.public_bytes(encoding=serialization.Encoding.PEM) # cryptography
+        # cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, server_cert) # pyopenssl
+        cert_pem = server_cert.public_bytes(
+            encoding=serialization.Encoding.PEM
+        )  # cryptography
         f.write(cert_pem)
 
     https_server_key_file = tempfile.mktemp(suffix=".pem", prefix="key-", dir=tmpdir)
     with open(https_server_key_file, "wb") as f:
-        #key_pem = OpenSSL.crypto.dump_privatekey(OpenSSL.crypto.FILETYPE_PEM, server_key) # pyopenssl
+        # key_pem = OpenSSL.crypto.dump_privatekey(OpenSSL.crypto.FILETYPE_PEM, server_key) # pyopenssl
         # cryptography
         # https://cryptography.io/en/latest/hazmat/primitives/asymmetric/rsa/
         key_pem = server_key.private_bytes(
-            encoding=serialization.Encoding.PEM, # PEM, DER
-            format=serialization.PrivateFormat.PKCS8, # TraditionalOpenSSL, OpenSSH, PKCS8
-            encryption_algorithm=serialization.NoEncryption(), # BestAvailableEncryption, NoEncryption
+            encoding=serialization.Encoding.PEM,  # PEM, DER
+            format=serialization.PrivateFormat.PKCS8,  # TraditionalOpenSSL, OpenSSH, PKCS8
+            encryption_algorithm=serialization.NoEncryption(),  # BestAvailableEncryption, NoEncryption
         )
         f.write(key_pem)
 
@@ -349,7 +371,7 @@ def run_test(tmpdir):
         ssl_cert_file=None,
         ssl_key_file=None,
         root=server_root,
-        #tmpdir=tmpdir,
+        # tmpdir=tmpdir,
     )
     http_server_process = Process(target=run_http_server, args=(http_server_args,))
     http_server_process.start()
@@ -367,12 +389,16 @@ def run_test(tmpdir):
         ssl_cert_file=https_server_cert_file,
         ssl_key_file=https_server_key_file,
         root=server_root,
-        #tmpdir=tmpdir,
+        # tmpdir=tmpdir,
     )
     https_server_process = Process(target=run_http_server, args=(https_server_args,))
     https_server_process.start()
-    https_server_process.stop = lambda: os.kill(https_server_process.pid, signal.SIGSTOP)
-    https_server_process.cont = lambda: os.kill(https_server_process.pid, signal.SIGCONT)
+    https_server_process.stop = lambda: os.kill(
+        https_server_process.pid, signal.SIGSTOP
+    )
+    https_server_process.cont = lambda: os.kill(
+        https_server_process.pid, signal.SIGCONT
+    )
 
     def handle_exit():
         process_list = [
@@ -401,11 +427,13 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
@@ -413,8 +441,8 @@ def run_test(tmpdir):
         assert exc.errors[0] == 19
         cert = exc.certificate.to_cryptography()
         # assert different objects, but same content
-        assert id(cert) != id(cert0) # no pointer equality
-        assert cert == cert0 # "semantic equality"
+        assert id(cert) != id(cert0)  # no pointer equality
+        assert cert == cert0  # "semantic equality"
         # assert that equality check is used
         cert_list = [cert0]
         assert cert in cert_list
@@ -427,8 +455,8 @@ def run_test(tmpdir):
     print_cert(cert1, "cert1")
     try:
         aia_session.add_trusted_root_cert(cert1)
-        #raise ValueError("must be a CA cert")
-        #raise ValueError("must be a self-signed cert")
+        # raise ValueError("must be a CA cert")
+        # raise ValueError("must be a self-signed cert")
     except ValueError as exc:
         expected_errors = [
             "must be a CA cert",
@@ -443,7 +471,7 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
-    assert aia_session.add_trusted_root_cert(cert0) == False # already added
+    assert aia_session.add_trusted_root_cert(cert0) == False  # already added
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -453,14 +481,16 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
-        #print("verified_cert_chain"); print_chain(verified_cert_chain)
-        #print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); print_chain(verified_cert_chain)
+        # print("missing_certs"); print_chain(missing_certs)
     except Exception:
         raise
     print(f"{test_name} ok")
@@ -471,7 +501,7 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     print_cert(cert0, "cert0")
     assert aia_session.remove_trusted_root_cert(cert0) == True
-    assert aia_session.remove_trusted_root_cert(cert0) == False # already removed
+    assert aia_session.remove_trusted_root_cert(cert0) == False  # already removed
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -481,11 +511,13 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
@@ -493,8 +525,8 @@ def run_test(tmpdir):
         assert exc.errors[0] == 19
         cert = exc.certificate.to_cryptography()
         # assert different objects, but same content
-        assert id(cert) != id(cert0) # no pointer equality
-        assert cert == cert0 # "semantic equality"
+        assert id(cert) != id(cert0)  # no pointer equality
+        assert cert == cert0  # "semantic equality"
         # assert that equality check is used
         cert_list = [cert0]
         assert cert in cert_list
@@ -506,7 +538,7 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
-    assert aia_session.add_trusted_root_cert(cert0) == False # already added
+    assert aia_session.add_trusted_root_cert(cert0) == False  # already added
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -516,15 +548,17 @@ def run_test(tmpdir):
     print(f"{test_name} ...")
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         # FIXME Exception: unable to get local issuer certificate. cert has no aia_ca_issuers
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
-        #print("verified_cert_chain"); print_chain(verified_cert_chain)
-        #print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); print_chain(verified_cert_chain)
+        # print("missing_certs"); print_chain(missing_certs)
     except Exception:
         raise
     print(f"{test_name} ok")
@@ -545,14 +579,16 @@ def run_test(tmpdir):
     # now aia_chase should fail
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
-        #print("verified_cert_chain"); print_chain(verified_cert_chain)
-        #print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); print_chain(verified_cert_chain)
+        # print("missing_certs"); print_chain(missing_certs)
     except TimeoutError:
         pass
     # FIXME BrokenPipeError from http server
@@ -573,14 +609,16 @@ def run_test(tmpdir):
     # now aia_chase should fail
     url = https_server_url
     url_parsed = urlsplit(url)
-    host = url_parsed.netloc # note: netloc is host and port
-    #print(f"parsed host {repr(host)} from url {repr(url)}")
+    host = url_parsed.netloc  # note: netloc is host and port
+    # print(f"parsed host {repr(host)} from url {repr(url)}")
     try:
         verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host, timeout=1, max_chain_depth=100,
+            host,
+            timeout=1,
+            max_chain_depth=100,
         )
-        #print("verified_cert_chain"); print_chain(verified_cert_chain)
-        #print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); print_chain(verified_cert_chain)
+        # print("missing_certs"); print_chain(missing_certs)
     except TimeoutError:
         pass
     https_server_process.cont()
@@ -616,7 +654,7 @@ def run_test(tmpdir):
 
         # http://pycurl.io/docs/latest/quickstart.html
 
-        #import certifi
+        # import certifi
         from io import BytesIO
 
         print("-" * 80)
@@ -625,7 +663,7 @@ def run_test(tmpdir):
         print(f"{test_name} ...")
         url = https_server_url
         # default ca root certs, usually /etc/ssl/certs/ca-bundle.crt
-        #curl_ca_bundle_path = certifi.where()
+        # curl_ca_bundle_path = certifi.where()
         # cert0 is not enough. curl also needs the missing CA certs cert1...cert3
         curl_ca_bundle_path = cert0_path
         c = pycurl.Curl()
@@ -640,8 +678,11 @@ def run_test(tmpdir):
             print("curl response body", body)
         except pycurl.error as exc:
             # pycurl.error: (60, 'SSL certificate problem: unable to get local issuer certificate')
-            #if exc.args[0] != 60 or exc.args[1] != "SSL certificate problem: unable to get local issuer certificate":
-            if exc.args != (60, 'SSL certificate problem: unable to get local issuer certificate'):
+            # if exc.args[0] != 60 or exc.args[1] != "SSL certificate problem: unable to get local issuer certificate":
+            if exc.args != (
+                60,
+                "SSL certificate problem: unable to get local issuer certificate",
+            ):
                 raise
         print(f"{test_name} ok")
 
@@ -671,7 +712,7 @@ def run_test(tmpdir):
         print(f"{test_name} ...")
         url = https_server_url
         # default ca root certs, usually /etc/ssl/certs/ca-bundle.crt
-        #curl_ca_bundle_path = certifi.where()
+        # curl_ca_bundle_path = certifi.where()
         curl_ca_bundle_path = f"{tmpdir}/curl-ca-bundle.crt"
         print(f"using ca-bundle {curl_ca_bundle_path}")
         # cert0 is not enough. curl also needs the missing CA certs cert1...cert3
@@ -697,14 +738,23 @@ def run_test(tmpdir):
             c_done = True
         except pycurl.error as exc:
             # pycurl.error: (60, 'SSL certificate problem: unable to get local issuer certificate')
-            if exc.args == (60, 'SSL certificate problem: unable to get local issuer certificate'):
+            if exc.args == (
+                60,
+                "SSL certificate problem: unable to get local issuer certificate",
+            ):
                 verified_cert_chain, missing_certs = aia_session.aia_chase(
-                    host, timeout=1, max_chain_depth=100,
+                    host,
+                    timeout=1,
+                    max_chain_depth=100,
                 )
-                print("verified_cert_chain"); print_chain(verified_cert_chain)
-                print("missing_certs"); print_chain(missing_certs)
+                print("verified_cert_chain")
+                print_chain(verified_cert_chain)
+                print("missing_certs")
+                print_chain(missing_certs)
                 assert len(missing_certs) > 0
-                print(f"adding {len(missing_certs)} missing certs to {curl_ca_bundle_path}")
+                print(
+                    f"adding {len(missing_certs)} missing certs to {curl_ca_bundle_path}"
+                )
 
                 # no. curl does not reload certs when we pass the same path to c.setopt(c.CAINFO
                 # append missing certs to curl ca-bundle.crt
@@ -719,14 +769,22 @@ def run_test(tmpdir):
                 # create new ca-bundle.crt including missing certs
                 new_curl_ca_bundle_path = f"{tmpdir}/curl-ca-bundle.2.crt"
                 with (
-                        open(curl_ca_bundle_path, "rb") as src,
-                        open(new_curl_ca_bundle_path, "wb") as dst,
-                    ):
-                    dst.write(src.read() + b"\n" + b"\n".join(map(
-                        lambda c: OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, c), # pyopenssl
-                        #lambda c: c.public_bytes(encoding=serialization.Encoding.PEM), # cryptography
-                        missing_certs
-                    )))
+                    open(curl_ca_bundle_path, "rb") as src,
+                    open(new_curl_ca_bundle_path, "wb") as dst,
+                ):
+                    dst.write(
+                        src.read()
+                        + b"\n"
+                        + b"\n".join(
+                            map(
+                                lambda c: OpenSSL.crypto.dump_certificate(
+                                    OpenSSL.crypto.FILETYPE_PEM, c
+                                ),  # pyopenssl
+                                # lambda c: c.public_bytes(encoding=serialization.Encoding.PEM), # cryptography
+                                missing_certs,
+                            )
+                        )
+                    )
                 c.setopt(c.CAINFO, new_curl_ca_bundle_path)
                 # retry request
                 print("retrying curl perform")
@@ -747,7 +805,7 @@ def run_test(tmpdir):
 
         print("-" * 80)
 
-    '''
+    """
     except Exception as exc:
         print("FIXME got unexpected exception:")
         print("exc.args", exc.args)
@@ -762,7 +820,7 @@ def run_test(tmpdir):
         with open(cert_path, "wb") as f:
             f.write(cert_pem)
         raise
-    '''
+    """
 
     print("aia_session.aia_chase done")
 
@@ -786,22 +844,20 @@ def run_test(tmpdir):
     print("ok")
 
 
-
 def main():
 
     # TODO check if dir exists
     main_tempdir = f"/run/user/{os.getuid()}"
 
     with (
-            tempfile.TemporaryDirectory(
-                prefix="python-aia-test",
-                dir=main_tempdir,
-                #ignore_cleanup_errors=False,
-            ) as tmpdir,
-        ):
+        tempfile.TemporaryDirectory(
+            prefix="python-aia-test",
+            dir=main_tempdir,
+            # ignore_cleanup_errors=False,
+        ) as tmpdir,
+    ):
 
         return run_test(tmpdir)
-
 
 
 if __name__ == "__main__":
