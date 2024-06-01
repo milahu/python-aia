@@ -75,8 +75,10 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
 
     print(f"creating cert {repr(name)}")
 
+    # https://cryptography.io/en/latest/x509/tutorial/
     # https://cryptography.io/en/latest/x509/reference/#x-509-certificate-builder
     # https://stackoverflow.com/questions/56285000/python-cryptography-create-a-certificate-signed-by-an-existing-ca-and-export
+    # https://gist.github.com/major/8ac9f98ae8b07f46b208
 
     is_root = issuer_cert is None
 
@@ -99,6 +101,8 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
 
     issuer_name = subject_name if is_root else issuer_cert.subject
 
+    issuer_key = key if is_root else issuer_key
+
     cert = x509.CertificateBuilder()
 
     cert = cert.subject_name(subject_name)
@@ -108,12 +112,46 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
     cert = cert.not_valid_before(datetime.datetime.utcnow())
     cert = cert.not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
 
-    # FIXME invalid CA certificate @ ctx.verify_certificate()
+    cert = cert.add_extension(
+        x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+        critical=False,
+    )
 
     # https://stackoverflow.com/a/72320618/10440128
-    #if not is_leaf: # no. certificate signature failure
-    if is_root:
+    #if is_root: # no. invalid CA certificate @ cert1
+
+    if not is_leaf:
         cert = cert.add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        cert = cert.add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=True,
+                crl_sign=True,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+    else:
+        cert = cert.add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                issuer_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+            ),
+            critical=False,
+        )
+
+    if is_leaf:
+        cert = cert.add_extension(
+            x509.ExtendedKeyUsage([
+                x509.ExtendedKeyUsageOID.CLIENT_AUTH,
+                x509.ExtendedKeyUsageOID.SERVER_AUTH,
+            ]),
+            critical=False,
+        )
 
     if issuer_cert_url:
         # add AIA extension
@@ -126,7 +164,9 @@ def create_cert(name, issuer_cert=None, issuer_key=None, issuer_cert_url=None, i
             ),
         ]), critical=False)
 
-    cert = cert.sign(key, hashes.SHA256(), default_backend())
+    # no. certificate signature failure
+    #cert = cert.sign(key, hashes.SHA256(), default_backend())
+    cert = cert.sign(issuer_key, hashes.SHA256(), default_backend())
 
     return cert, key
 
@@ -177,8 +217,6 @@ def run_test(tmpdir):
 
     # create certs
     # TODO refactor ... create_cert_chain
-
-    # FIXME invalid CA certificate @ ctx.verify_certificate()
 
     cert0, key0 = create_cert("root cert")
     with open(f"{server_root}/cert0", "wb") as f:
@@ -298,32 +336,30 @@ def run_test(tmpdir):
     print("creating aia_session")
     aia_session = aia.AIASession()
 
+    def print_cert(cert, label=None, indent=""):
+        if label:
+            print(indent + label + ":")
+        if isinstance(cert, cryptography.x509.Certificate):
+            # cryptography cert
+            # https://cryptography.io/en/latest/x509/reference/
+            print(indent + f"  subject: {cert.subject}")
+            print(indent + f"  issuer: {cert.issuer})")
+            print(indent + f"  fingerprint: {cert.fingerprint(hashes.SHA256())}")
+            return
+        if isinstance(cert, OpenSSL.crypto.X509):
+            # pyopenssl cert
+            print(indent + f"  subject: {cert.get_subject()}")
+            print(indent + f"  issuer: {cert.get_issuer()})")
+            print(indent + f'  fingerprint: {cert.digest("sha256")}')
+            return
+        raise ValueError("unknown cert type {type(cert)}")
+
     def print_chain(cert_chain):
         if not cert_chain:
             print("  (empty)")
             return
         for (idx, cert) in enumerate(cert_chain):
-            print(f"  {idx} subject: {cert.get_subject()}")
-            print(f"    issuer: {cert.get_issuer()})")
-            print(f'    fingerprint: {cert.digest("sha1")}')
-
-    def print_cert(cert, label=None):
-        if label:
-            print(label + ":")
-        if isinstance(cert, cryptography.x509.Certificate):
-            # cryptography cert
-            # https://cryptography.io/en/latest/x509/reference/
-            print(f"  subject: {cert.subject}")
-            print(f"    issuer: {cert.issuer})")
-            print(f"    fingerprint: {cert.fingerprint(hashes.SHA256())}")
-            return
-        if isinstance(cert, OpenSSL.crypto.X509):
-            # pyopenssl cert
-            print(f"  subject: {cert.get_subject()}")
-            print(f"    issuer: {cert.get_issuer()})")
-            print(f'    fingerprint: {cert.digest("sha256")}')
-            return
-        raise ValueError("unknown cert type {type(cert)}")
+            print_cert(cert, f"cert {idx}", "  ")
 
     print("aia_session.aia_chase ...")
 
@@ -365,17 +401,24 @@ def run_test(tmpdir):
 
     test_name = "aia_session.add_trusted_root_cert with non-root cert"
     print(f"{test_name} ...")
+    print_cert(cert1, "cert1")
     try:
         aia_session.add_trusted_root_cert(cert1)
         #raise ValueError("must be a CA cert")
+        #raise ValueError("must be a self-signed cert")
     except ValueError as exc:
-        assert str(exc) == "must be a CA cert"
+        expected_errors = [
+            "must be a CA cert",
+            "must be a self-signed cert",
+        ]
+        assert str(exc) in expected_errors
     print(f"{test_name} ok")
 
     print("-" * 80)
 
     test_name = "aia_session.add_trusted_root_cert"
     print(f"{test_name} ...")
+    print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
     assert aia_session.add_trusted_root_cert(cert0) == False # already exists
     print(f"{test_name} ok")
@@ -392,29 +435,31 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host, timeout=5, max_chain_depth=100,
         )
-        print("verified_cert_chain"); print_chain(verified_cert_chain)
-        print("missing_certs"); print_chain(missing_certs)
-    except Exception as exc:
-        print("FIXME got unexpected exception:")
-        print("exc.args", exc.args)
-        print("exc.certificate", exc.certificate)
-        print("exc.errors", exc.errors)
-        print("exc str", str(exc))
-        print("exc dir", dir(exc))
-        raise
-        """
-        FIXME got unexpected exception:
-        exc.args ('self-signed certificate in certificate chain',)
-        exc.certificate <OpenSSL.crypto.X509 object at 0x7f5876cf8b10>
-        exc.errors [19, 2, 'self-signed certificate in certificate chain']
-        exc str self-signed certificate in certificate chain
-        """
+        #print("verified_cert_chain"); print_chain(verified_cert_chain)
+        #print("missing_certs"); print_chain(missing_certs)
     print(f"{test_name} ok")
 
     print("-" * 80)
 
     # TODO test
     # aia_session.remove_trusted_root_cert(cert0)
+
+    '''
+    except Exception as exc:
+        print("FIXME got unexpected exception:")
+        print("exc.args", exc.args)
+        print("exc.certificate", exc.certificate)
+        print_cert(exc.certificate, "exc.certificate")
+        print("exc.errors", exc.errors)
+        print("exc str", str(exc))
+        print("exc dir", dir(exc))
+        cert_path = f"/run/user/{os.getuid()}/python-aia-invalid-ca-cert.pem"
+        print("writing", cert_path)
+        cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, exc.certificate)
+        with open(cert_path, "wb") as f:
+            f.write(cert_pem)
+        raise
+    '''
 
     print("aia_session.aia_chase done")
 

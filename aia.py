@@ -18,6 +18,7 @@ import cryptography
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.serialization import pkcs7
+from cryptography.hazmat.primitives import hashes
 
 import certifi
 
@@ -120,6 +121,27 @@ def openssl_get_cert_info(cert_der):
         aia_ca_issuers = get_ca_issuers_of_cert(cert),
     )
     return cert_info
+
+
+
+def print_cert(cert, label=None):
+    if label:
+        print(label + ":")
+    if isinstance(cert, cryptography.x509.Certificate):
+        # cryptography cert
+        # https://cryptography.io/en/latest/x509/reference/
+        print(f"  subject: {cert.subject}")
+        print(f"    issuer: {cert.issuer})")
+        print(f"    fingerprint: {cert.fingerprint(hashes.SHA256())}")
+        return
+    if isinstance(cert, OpenSSL.crypto.X509):
+        # pyopenssl cert
+        print(f"  subject: {cert.get_subject()}")
+        print(f"    issuer: {cert.get_issuer()})")
+        print(f'    fingerprint: {cert.digest("sha256")}')
+        return
+    raise ValueError("unknown cert type {type(cert)}")
+
 
 
 class AIASession:
@@ -364,6 +386,7 @@ class AIASession:
             cert = cert.to_cryptography()
         assert isinstance(cert, cryptography.x509.Certificate)
         """
+        print_cert(cert, "add_trusted_root_cert cert")
         if isinstance(cert, cryptography.x509.Certificate):
             # convert cert from cryptography to pyopenssl
             # for OpenSSL.crypto.X509StoreContext
@@ -387,7 +410,8 @@ class AIASession:
         for c in self._trusted_root_certs:
             if c.digest("sha256") == cert_digest:
                 return False # cert already was added
-        logger.debug(f"adding trusted root cert {cert}")
+        digest_hex = cert_digest # .decode("ascii").replace(":", "").lower()
+        logger.debug(f"adding trusted root cert {digest_hex}")
         self._trusted_root_certs.append(cert)
         return True # cert was added
 
@@ -443,7 +467,7 @@ class AIASession:
             for (idx, cert) in enumerate(cert_chain):
                 print(f"  {idx} subject: {cert.get_subject()}")
                 print(f"    issuer: {cert.get_issuer()})")
-                print(f'    fingerprint: {cert.digest("sha1")}')
+                print(f'    fingerprint: {cert.digest("sha256")}')
 
         print("verified_cert_chain"); print_chain(verified_cert_chain)
         print("rest_cert_chain"); print_chain(rest_cert_chain)
@@ -486,7 +510,6 @@ class AIASession:
 
         # add trusted root certs
         for cert in self._trusted_root_certs:
-            # FIXME invalid CA certificate @ ctx.verify_certificate()
             store.add_cert(cert)
 
         # verified_cert_chain[0:-1] certs are verified
