@@ -8,6 +8,7 @@ import tempfile
 import random
 import atexit
 import signal
+import shutil
 from multiprocessing import Process
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import ssl
@@ -216,6 +217,7 @@ def print_cert(cert, label=None, indent=""):
         return
     if isinstance(cert, OpenSSL.crypto.X509):
         # pyopenssl cert
+        # https://www.pyopenssl.org/en/stable/api/crypto.html
         print(indent + f"  subject: {cert.get_subject()}")
         print(indent + f"  issuer: {cert.get_issuer()})")
         print(indent + f'  fingerprint: {cert.digest("sha256")}')
@@ -249,13 +251,15 @@ def run_test(tmpdir):
     # TODO refactor ... create_cert_chain
 
     cert0, key0 = create_cert("root cert")
-    with open(f"{server_root}/cert0", "wb") as f:
+    cert0_path = f"{server_root}/cert0"
+    with open(cert0_path, "wb") as f:
         # PEM format
         f.write(cert0.public_bytes(encoding=serialization.Encoding.PEM))
     url0 = f"http://127.0.0.1:{http_port}/cert0"
 
     cert1, key1 = create_cert("branch cert 1", cert0, key0, url0)
-    with open(f"{server_root}/cert1", "wb") as f:
+    cert1_path = f"{server_root}/cert1"
+    with open(cert1_path, "wb") as f:
         # DER = ASN1 format
         f.write(cert1.public_bytes(encoding=serialization.Encoding.DER))
     url1 = f"http://127.0.0.1:{http_port}/cert1"
@@ -277,14 +281,16 @@ def run_test(tmpdir):
     """
 
     cert2, key2 = create_cert("branch cert 2", cert1, key1, url1)
-    with open(f"{server_root}/cert2", "wb") as f:
+    cert2_path = f"{server_root}/cert2"
+    with open(cert2_path, "wb") as f:
         # PKCS7-DER format
         #f.write(pkcs7.serialize_certificates([cert2.to_cryptography()], Encoding.DER))
         f.write(pkcs7.serialize_certificates([cert2], Encoding.DER))
     url2 = f"http://127.0.0.1:{http_port}/cert2"
 
     cert3, key3 = create_cert("branch cert 3", cert2, key2, url2)
-    with open(f"{server_root}/cert3", "wb") as f:
+    cert3_path = f"{server_root}/cert3"
+    with open(cert3_path, "wb") as f:
         # PKCS7-PEM format
         #f.write(pkcs7.serialize_certificates([cert3.to_cryptography()], Encoding.PEM))
         f.write(pkcs7.serialize_certificates([cert3], Encoding.PEM))
@@ -292,7 +298,26 @@ def run_test(tmpdir):
 
     # TODO test invalid url3 with invalid host or port
 
-    cert4, key4 = create_cert("leaf cert", cert3, key3, url3, is_leaf=True)
+    # no. pycurl.error: (60, "SSL: certificate subject name 'leaf cert' does not match target host name '127.0.0.1'")
+    #cert4, key4 = create_cert("leaf cert", cert3, key3, url3, is_leaf=True)
+
+    cert4, key4 = create_cert("127.0.0.1", cert3, key3, url3, is_leaf=True)
+    #cert4_path = f"{server_root}/cert4"
+
+    all_ca_certs = [
+        cert0, # root cert
+        cert1,
+        cert2,
+        cert3,
+        #cert4, # leaf cert
+    ]
+
+    all_ca_certs_pem_path = f"{server_root}/all-certs.pem"
+    with open(all_ca_certs_pem_path, "wb") as f:
+        f.write(b"\n".join(map(
+            lambda c: c.public_bytes(encoding=serialization.Encoding.PEM),
+            all_ca_certs
+        )))
 
     server_cert, server_key = cert4, key4
 
@@ -565,6 +590,163 @@ def run_test(tmpdir):
 
     # TODO test max_chain_depth=1
 
+    # curl does not-yet support AIA
+    # https://github.com/curl/curl/issues/2793
+    # https://github.com/curl/curl/discussions/13776
+
+    # workaround:
+    # try download with curl
+    # except pycurl.error: (60, 'SSL certificate problem: unable to get local issuer certificate')
+    # download missing certs with aia_chase
+    # add missing certs to ca-bundle.crt
+    # pass ca-bundle.crt to curl
+    # retry download with curl
+
+    pycurl = None
+    try:
+        import pycurl
+    except ImportError:
+        print("pycurl module was not found -> skipping pycurl tests")
+
+    if pycurl:
+
+        print("-" * 80)
+
+        print("pycurl tests ...")
+
+        # http://pycurl.io/docs/latest/quickstart.html
+
+        #import certifi
+        from io import BytesIO
+
+        print("-" * 80)
+
+        test_name = "pycurl with only root ca cert"
+        print(f"{test_name} ...")
+        url = https_server_url
+        # default ca root certs, usually /etc/ssl/certs/ca-bundle.crt
+        #curl_ca_bundle_path = certifi.where()
+        # cert0 is not enough. curl also needs the missing CA certs cert1...cert3
+        curl_ca_bundle_path = cert0_path
+        c = pycurl.Curl()
+        c.setopt(c.URL, url)
+        buffer = BytesIO()
+        c.setopt(c.WRITEDATA, buffer)
+        c.setopt(c.CAINFO, curl_ca_bundle_path)
+        try:
+            c.perform()
+            c.close()
+            body = buffer.getvalue()
+            print("curl response body", body)
+        except pycurl.error as exc:
+            # pycurl.error: (60, 'SSL certificate problem: unable to get local issuer certificate')
+            #if exc.args[0] != 60 or exc.args[1] != "SSL certificate problem: unable to get local issuer certificate":
+            if exc.args != (60, 'SSL certificate problem: unable to get local issuer certificate'):
+                raise
+        print(f"{test_name} ok")
+
+        print("-" * 80)
+
+        test_name = "pycurl with all ca certs"
+        print(f"{test_name} ...")
+        url = https_server_url
+        curl_ca_bundle_path = all_ca_certs_pem_path
+        c = pycurl.Curl()
+        c.setopt(c.URL, url)
+        buffer = BytesIO()
+        c.setopt(c.WRITEDATA, buffer)
+        c.setopt(c.CAINFO, curl_ca_bundle_path)
+        try:
+            c.perform()
+            c.close()
+            body = buffer.getvalue()
+            print("pycurl response body", body)
+        except pycurl.error as exc:
+            raise
+        print(f"{test_name} ok")
+
+        print("-" * 80)
+
+        test_name = "pycurl with aia_chase fallback"
+        print(f"{test_name} ...")
+        url = https_server_url
+        # default ca root certs, usually /etc/ssl/certs/ca-bundle.crt
+        #curl_ca_bundle_path = certifi.where()
+        curl_ca_bundle_path = f"{tmpdir}/curl-ca-bundle.crt"
+        print(f"using ca-bundle {curl_ca_bundle_path}")
+        # cert0 is not enough. curl also needs the missing CA certs cert1...cert3
+        shutil.copy(cert0_path, curl_ca_bundle_path)
+
+        # create new session to drop cache
+        print("destroying aia_session")
+        del aia_session
+        print("creating aia_session")
+        # note: use same ca-bundle.crt for curl and aia
+        aia_session = aia.AIASession(
+            cafile=curl_ca_bundle_path,
+        )
+
+        c = pycurl.Curl()
+        c.setopt(c.URL, url)
+        buffer = BytesIO()
+        c.setopt(c.WRITEDATA, buffer)
+        c.setopt(c.CAINFO, curl_ca_bundle_path)
+        c_done = False
+        try:
+            c.perform()
+            c_done = True
+        except pycurl.error as exc:
+            # pycurl.error: (60, 'SSL certificate problem: unable to get local issuer certificate')
+            if exc.args == (60, 'SSL certificate problem: unable to get local issuer certificate'):
+                verified_cert_chain, missing_certs = aia_session.aia_chase(
+                    host, timeout=1, max_chain_depth=100,
+                )
+                print("verified_cert_chain"); print_chain(verified_cert_chain)
+                print("missing_certs"); print_chain(missing_certs)
+                assert len(missing_certs) > 0
+                print(f"adding {len(missing_certs)} missing certs to {curl_ca_bundle_path}")
+
+                # no. curl does not reload certs when we pass the same path to c.setopt(c.CAINFO
+                # append missing certs to curl ca-bundle.crt
+                # with open(curl_ca_bundle_path, "ab") as f:
+                #     f.write(b"\n" + b"\n".join(map(
+                #         lambda c: OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, c), # pyopenssl
+                #         #lambda c: c.public_bytes(encoding=serialization.Encoding.PEM), # cryptography
+                #         missing_certs
+                #     )))
+                # c.setopt(c.CAINFO, curl_ca_bundle_path)
+
+                # create new ca-bundle.crt including missing certs
+                new_curl_ca_bundle_path = f"{tmpdir}/curl-ca-bundle.2.crt"
+                with (
+                        open(curl_ca_bundle_path, "rb") as src,
+                        open(new_curl_ca_bundle_path, "wb") as dst,
+                    ):
+                    dst.write(src.read() + b"\n" + b"\n".join(map(
+                        lambda c: OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, c), # pyopenssl
+                        #lambda c: c.public_bytes(encoding=serialization.Encoding.PEM), # cryptography
+                        missing_certs
+                    )))
+                c.setopt(c.CAINFO, new_curl_ca_bundle_path)
+                # retry request
+                print("retrying curl perform")
+                try:
+                    c.perform()
+                    c_done = True
+                except pycurl.error as exc:
+                    raise
+        if c_done:
+            body = buffer.getvalue()
+            print("pycurl response body", body)
+        c.close()
+        print(f"{test_name} ok")
+
+        print("-" * 80)
+
+        print("pycurl tests ok")
+
+        print("-" * 80)
+
     '''
     except Exception as exc:
         print("FIXME got unexpected exception:")
@@ -601,7 +783,7 @@ def run_test(tmpdir):
     print(f"cleanup")
     handle_exit()
 
-    print("done")
+    print("ok")
 
 
 

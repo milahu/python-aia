@@ -21,8 +21,6 @@ from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.hazmat.primitives import hashes
 
-import certifi
-
 import timeout_decorator
 
 
@@ -152,8 +150,12 @@ class AIASession:
     def __init__(
             self,
             user_agent=DEFAULT_USER_AGENT,
+            cafile=None,
             cache_db=None,
             cache_dir=None,
+            # TODO load/store trusted root certs
+            #trusted_db=None,
+            #trusted_dir=None,
         ):
         """
         Create a new session.
@@ -161,12 +163,16 @@ class AIASession:
         """
         logger.debug("creating AIASession")
         self.user_agent = user_agent
+        self.cafile = cafile
+        if not cafile:
+            import certifi
+            self.cafile = cafile = certifi.where()
         self.cache_db = cache_db
         self.cache_db_con = None
         self.cache_db_cur = None
         self.cache_dir = cache_dir
         self._context = OpenSSL.SSL.Context(method=OpenSSL.SSL.TLS_CLIENT_METHOD)
-        self._context.load_verify_locations(cafile=certifi.where())
+        self._context.load_verify_locations(cafile=self.cafile)
         self._cadata_from_host_regex = dict()
         self._trusted_root_certs = list()
 
@@ -391,6 +397,12 @@ class AIASession:
             self._write_cert_cache(url_parsed, cert)
             return cert
 
+    def add_trusted_root_cert_file(self, cert_file):
+        with open(cert_file, "rb") as f:
+            cert_bytes = f.read()
+        cert = self._load_cert_from_bytes(cert_bytes)
+        return self.add_trusted_root_cert(cert)
+
     def add_trusted_root_cert(self, cert):
         """
         if isinstance(cert, OpenSSL.crypto.X509):
@@ -571,7 +583,7 @@ class AIASession:
             #ctx = OpenSSL.crypto.X509StoreContext(store, cert, self._trusted_root_certs + missing_certs)
             try:
                 ctx.verify_certificate()
-                print("cert is valid. full chain is valid, no missing certs were fetched")
+                #print("cert is valid. full chain is valid, no missing certs were fetched")
                 # cert is valid
                 # full chain is valid, no missing certs were fetched
                 #verified_cert_chain.append(issuer_cert.to_cryptography())
@@ -649,6 +661,7 @@ class AIASession:
             der_cert_was_fetched = True
         '''
 
+    # TODO remove?
     def validate_certificate_chain(self, certs):
         """
         Validate a given certificate chain which should be full,
@@ -677,7 +690,7 @@ class AIASession:
         )
         """
 
-        ca_bundle_path = certifi.where()
+        ca_bundle_path = self.cafile
 
         with open(ca_bundle_path, "rb") as pems:
             store = x509.verification.Store(x509.load_pem_x509_certificates(pems.read()))
