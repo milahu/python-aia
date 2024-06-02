@@ -171,18 +171,16 @@ class AIASession:
         logger.debug("creating AIASession")
         self.user_agent = user_agent
         self.cafile = cafile
-        if cafile:
-            if not os.path.exists(cafile):
-                raise FileNotFoundError(cafile)
-        else:
+        if not cafile:
             import certifi
 
-            self.cafile = cafile = certifi.where()
+            self.cafile = certifi.where()
         self.cache_db = cache_db
         self.cache_db_con = None
         self.cache_db_cur = None
         self.cache_dir = cache_dir
         self._context = OpenSSL.SSL.Context(method=OpenSSL.SSL.TLS_CLIENT_METHOD)
+        # this throws OpenSSL.SSL.Error if cafile is missing or empty
         self._context.load_verify_locations(cafile=self.cafile)
         self._cadata_from_host_regex = dict()
         self._trusted_root_certs = list()

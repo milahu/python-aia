@@ -599,6 +599,47 @@ def run_test(tmpdir):
 
     print("-" * 80)
 
+    test_name = "aia_session.aia_chase with empty cafile"
+    print(f"{test_name} ...")
+    empty_file = f"{tmpdir}/empty-file"
+    open(empty_file, 'a').close() # create empty file
+    # create new session with empty cafile
+    print("destroying aia_session")
+    del aia_session
+    print("creating aia_session")
+    try:
+        aia_session = aia.AIASession(
+            cafile=empty_file,
+        )
+    except OpenSSL.SSL.Error as exc:
+        assert exc.args == ([('x509 certificate routines', '', 'no certificate or crl found')],)
+    aia_session = None # fix: del aia_session
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
+    test_name = "aia_session.aia_chase with missing cafile"
+    print(f"{test_name} ...")
+    # create new session with missing cafile
+    missing_file = "/var/empty/missing-file"
+    print("destroying aia_session")
+    del aia_session
+    print("creating aia_session")
+    try:
+        aia_session = aia.AIASession(
+            cafile=missing_file,
+        )
+    except OpenSSL.SSL.Error as exc:
+        assert exc.args == ([
+            ('system library', '', ''),
+            ('BIO routines', '', 'no such file'),
+            ('x509 certificate routines', '', 'system lib')
+        ],)
+    aia_session = None # fix: del aia_session
+    print(f"{test_name} ok")
+
+    print("-" * 80)
+
     # TODO test max_chain_depth=1
 
     # curl does not-yet support AIA
