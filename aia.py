@@ -1,6 +1,4 @@
 import os
-import sys
-from contextlib import ExitStack
 from functools import lru_cache, partial
 import logging
 import re
@@ -14,11 +12,6 @@ from urllib.parse import urlsplit
 
 # pyopenssl
 import OpenSSL
-from OpenSSL.crypto import (
-    X509,
-    Error,
-    _openssl_assert,
-)
 from OpenSSL._util import (
     lib as _lib,
     ffi as _ffi,
@@ -226,16 +219,12 @@ class AIASession:
             while True:
                 try:
                     return conn.do_handshake()
-                except (OpenSSL.SSL.WantReadError, OpenSSL.SSL.WantWriteError) as exc:
+                except (OpenSSL.SSL.WantReadError, OpenSSL.SSL.WantWriteError):
                     remain = timeout - (time.time() - start)
                     if remain < 0:
                         conn.setblocking(1)
                         raise TimeoutError
-                    # TODO? handle timeout from select
-                    readable, writable, errored = select.select(
-                        [sock], [sock], [], remain
-                    )
-                    time.sleep(0.5)  # reduce cpu load
+                    select.select([sock], [], [], remain)
 
         do_handshake()
 
@@ -244,28 +233,6 @@ class AIASession:
         host_cert_chain = conn.get_peer_cert_chain()
 
         return host_cert_chain
-
-        # TODO remove
-        """
-        verified_chain = conn.get_verified_chain()
-
-        return host_cert_chain, verified_chain
-
-        verified_chain = conn.get_verified_chain()
-
-        # TODO remove
-        '''
-        if len(verified_chain) == len(peer_cert_chain):
-            # rest_cert_chain is empty
-            # this does not mean that the chain is valid
-            # the server can return only 1 cert
-            return verified_chain, None
-        '''
-
-        rest_cert_chain = peer_cert_chain[len(verified_chain):]
-
-        return verified_chain, rest_cert_chain
-        """
 
     def _init_cache_db(self):
         if self.cache_db_con:
@@ -425,7 +392,7 @@ class AIASession:
 
         # TODO more specific
         raise Exception(
-            f"failed to parse cert from {url}. cert_bytes: {cert_bytes.hex()}"
+            f"failed to parse cert from cert_bytes {cert_bytes.hex()}"
         )
 
     @CachedMethod
@@ -466,13 +433,6 @@ class AIASession:
         return self.add_trusted_root_cert(cert)
 
     def add_trusted_root_cert(self, cert):
-        """
-        if isinstance(cert, OpenSSL.crypto.X509):
-            # convert cert from pyopenssl to cryptography
-            cert = cert.to_cryptography()
-        assert isinstance(cert, cryptography.x509.Certificate)
-        """
-        print_cert(cert, "add_trusted_root_cert cert")
         if isinstance(cert, cryptography.x509.Certificate):
             # convert cert from cryptography to pyopenssl
             # for OpenSSL.crypto.X509StoreContext
@@ -488,13 +448,6 @@ class AIASession:
             raise ValueError("must be a CA cert")
         if cert.get_issuer() != cert.get_subject():
             raise ValueError("must be a self-signed cert")
-        # no. this only works with cryptography certs
-        """
-        # note: this check uses cert.__eq__ ("semantic equality")
-        #   so no need for pointer equality
-        if cert in self._trusted_root_certs:
-            return False
-        """
         cert_digest = cert.digest("sha256")
         for c in self._trusted_root_certs:
             if c.digest("sha256") == cert_digest:
@@ -634,7 +587,7 @@ class AIASession:
     def _get_verified_cert_chain(self, cert_store_ctx):
         # based on OpenSSL.crypto._verify_certificate
         _store_ctx = _lib.X509_STORE_CTX_new()
-        _openssl_assert(_store_ctx != _ffi.NULL)
+        OpenSSL.crypto._openssl_assert(_store_ctx != _ffi.NULL)
         _store_ctx = _ffi.gc(_store_ctx, _lib.X509_STORE_CTX_free)
         ret = _lib.X509_STORE_CTX_init(
             _store_ctx,
@@ -642,7 +595,7 @@ class AIASession:
             cert_store_ctx._cert._x509,
             cert_store_ctx._chain,
         )
-        _openssl_assert(ret == 1)
+        OpenSSL.crypto._openssl_assert(ret == 1)
         ret = _lib.X509_verify_cert(_store_ctx)
         if ret < 0:
             raise cert_store_ctx._exception_from_context(_store_ctx)
@@ -650,12 +603,12 @@ class AIASession:
         # ret == 0: cert was not verified
         # based on OpenSSL.crypto.get_verified_chain
         _cert_stack = _lib.X509_STORE_CTX_get1_chain(_store_ctx)
-        _openssl_assert(_cert_stack != _ffi.NULL)
+        OpenSSL.crypto._openssl_assert(_cert_stack != _ffi.NULL)
         cert_chain = []
         for i in range(_lib.sk_X509_num(_cert_stack)):
             _cert = _lib.sk_X509_value(_cert_stack, i)
-            _openssl_assert(_cert != _ffi.NULL)
-            cert = X509._from_raw_x509_ptr(_cert)
+            OpenSSL.crypto._openssl_assert(_cert != _ffi.NULL)
+            cert = OpenSSL.crypto.X509._from_raw_x509_ptr(_cert)
             cert_chain.append(cert)
         return cert_chain
 
@@ -665,7 +618,7 @@ class AIASession:
         as joined PEM (ASCII string in base64 with extra delimiters)
         certificates in a single string, to be used in a SSLContext.
         """
-        cadata, host_regex = self.cadata_and_host_regex_from_host(host, **kwargs)
+        cadata, _host_regex = self.cadata_and_host_regex_from_host(host, **kwargs)
         return cadata
 
     # TODO remove?
@@ -750,6 +703,8 @@ class AIASession:
     def urlopen(self, url, data=None, timeout=None):
         """Same to ``urllib.request.urlopen``, but handles AIA."""
         url_string = url.full_url if isinstance(url, Request) else url
+        # TODO? Audit url open for permitted schemes.
+        # Allowing use of file:/ or custom schemes is often unexpected.
         context = self.ssl_context_from_url(url_string)
         kwargs = {"data": data, "timeout": timeout, "context": context}
         cleaned_kwargs = {k: v for k, v in kwargs.items() if v is not None}
