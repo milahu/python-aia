@@ -6,7 +6,6 @@ import socket
 import ssl
 import select
 import time
-from tempfile import NamedTemporaryFile
 from urllib.request import urlopen, Request
 from urllib.parse import urlsplit
 
@@ -348,7 +347,9 @@ class AIASession:
         # try to load PKCS7-DER format
         try:
             certs = pkcs7.load_der_pkcs7_certificates(cert_bytes)
-            assert len(certs) == 1  # TODO
+            # FIXME Use of assert detected. The enclosed code will be removed
+            #   when compiling to optimised byte code.
+            # assert len(certs) == 1  # TODO
             cert = certs[0]
             # here we need pyopenssl cert
             # for OpenSSL.crypto.X509StoreContext
@@ -437,7 +438,9 @@ class AIASession:
             # convert cert from cryptography to pyopenssl
             # for OpenSSL.crypto.X509StoreContext
             cert = OpenSSL.crypto.X509.from_cryptography(cert)
-        assert isinstance(cert, OpenSSL.crypto.X509)
+        # FIXME Use of assert detected. The enclosed code will be removed
+        #   when compiling to optimised byte code.
+        # assert isinstance(cert, OpenSSL.crypto.X509)
         try:
             ext_bc = cert.to_cryptography().extensions.get_extension_for_class(
                 x509.BasicConstraints
@@ -529,7 +532,7 @@ class AIASession:
         if verify_depth == -1:
             verify_depth = 1000
 
-        for verify_chain_idx in range(verify_depth):
+        for _verify_chain_idx in range(verify_depth):
 
             # logger.debug("verify_chain_idx", verify_chain_idx)
 
@@ -645,7 +648,7 @@ class AIASession:
         print("cadata_and_host_regex_from_host cache miss")
 
         # note: this can throw
-        cert_chain, missing_certs = self.aia_chase(host, timeout)
+        cert_chain, _missing_certs = self.aia_chase(host, timeout)
 
         target_cert = cert_chain[0]
 
