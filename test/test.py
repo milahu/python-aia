@@ -385,12 +385,13 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
+        raise "should raise"
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
-        # exc.errors [19, 1, 'self-signed certificate in certificate chain']
         assert exc.errors[0] == 19
+        # exc.errors[1] is the chain depth
+        assert exc.errors[2] == "self-signed certificate in certificate chain"
         cert = exc.certificate.to_cryptography()
         # assert different objects, but same content
         assert id(cert) != id(cert0)  # no pointer equality
@@ -398,6 +399,13 @@ def run_test(tmpdir):
         # assert that equality check is used
         cert_list = [cert0]
         assert cert in cert_list
+        # get return value from exception
+        verified_cert_chain = exc._aia_verified_cert_chain
+        missing_certs = exc._aia_missing_certs
+        aia.print_chain(verified_cert_chain, "verified_cert_chain")
+        aia.print_chain(missing_certs, "missing_certs")
+        assert verified_cert_chain[0].to_cryptography() == cert4
+        #for cert in verified_cert_chain:
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -439,7 +447,6 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
         # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
         # print("missing_certs"); aia.print_chain(missing_certs)
@@ -469,12 +476,12 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
     except OpenSSL.crypto.X509StoreContextError as exc:
         # print("exc.errors", exc.errors)
-        # exc.errors [19, 1, 'self-signed certificate in certificate chain']
         assert exc.errors[0] == 19
+        # exc.errors[1] is the chain depth
+        assert exc.errors[2] == "self-signed certificate in certificate chain"
         cert = exc.certificate.to_cryptography()
         # assert different objects, but same content
         assert id(cert) != id(cert0)  # no pointer equality
@@ -507,7 +514,6 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
         # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
         # print("missing_certs"); aia.print_chain(missing_certs)
@@ -517,7 +523,10 @@ def run_test(tmpdir):
 
     print("-" * 80)
 
-    # TODO test max_chain_depth=1
+    # TODO test
+    # aia_session = aia.AIASession(verify_depth=1)
+
+    # TODO test missing certs: os.rename(cert0_path, ...)
 
     test_name = "aia_session.aia_chase with stopped http server"
     print(f"{test_name} ...")
@@ -537,7 +546,6 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
         # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
         # print("missing_certs"); aia.print_chain(missing_certs)
@@ -568,7 +576,6 @@ def run_test(tmpdir):
         verified_cert_chain, missing_certs = aia_session.aia_chase(
             host,
             timeout=1,
-            max_chain_depth=100,
         )
         # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
         # print("missing_certs"); aia.print_chain(missing_certs)
@@ -623,8 +630,6 @@ def run_test(tmpdir):
     print(f"{test_name} ok")
 
     print("-" * 80)
-
-    # TODO test max_chain_depth=1
 
     # curl does not-yet support AIA
     # https://github.com/curl/curl/issues/2793
@@ -743,7 +748,6 @@ def run_test(tmpdir):
                 verified_cert_chain, missing_certs = aia_session.aia_chase(
                     host,
                     timeout=1,
-                    max_chain_depth=100,
                 )
                 print("verified_cert_chain")
                 aia.print_chain(verified_cert_chain)
@@ -806,12 +810,13 @@ def run_test(tmpdir):
     """
     except Exception as exc:
         print("FIXME got unexpected exception:")
+        print("exc type", type(exc))
+        print("exc str", str(exc))
+        print("exc dir", dir(exc))
         print("exc.args", exc.args)
         print("exc.certificate", exc.certificate)
         aia.print_cert(exc.certificate, "exc.certificate")
         print("exc.errors", exc.errors)
-        print("exc str", str(exc))
-        print("exc dir", dir(exc))
         cert_path = f"/run/user/{os.getuid()}/python-aia-invalid-ca-cert.pem"
         print("writing", cert_path)
         cert_pem = OpenSSL.crypto.dump_certificate(OpenSSL.crypto.FILETYPE_PEM, exc.certificate)
@@ -858,7 +863,7 @@ def main():
 
     with (
         tempfile.TemporaryDirectory(
-            prefix="python-aia-test",
+            prefix="python-aia-test.",
             dir=main_tempdir,
             # ignore_cleanup_errors=False,
         ) as tmpdir,
