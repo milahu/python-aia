@@ -223,34 +223,6 @@ def run_http_server(args):
     http_server.serve_forever()
 
 
-def print_cert(cert, label=None, indent=""):
-    if label:
-        print(indent + label + ":")
-    if isinstance(cert, cryptography.x509.Certificate):
-        # cryptography cert
-        # https://cryptography.io/en/latest/x509/reference/
-        print(indent + f"  subject: {cert.subject}")
-        print(indent + f"  issuer: {cert.issuer})")
-        print(indent + f"  fingerprint: {cert.fingerprint(hashes.SHA256())}")
-        return
-    if isinstance(cert, OpenSSL.crypto.X509):
-        # pyopenssl cert
-        # https://www.pyopenssl.org/en/stable/api/crypto.html
-        print(indent + f"  subject: {cert.get_subject()}")
-        print(indent + f"  issuer: {cert.get_issuer()})")
-        print(indent + f'  fingerprint: {cert.digest("sha256")}')
-        return
-    raise ValueError("unknown cert type {type(cert)}")
-
-
-def print_chain(cert_chain):
-    if not cert_chain:
-        print("  (empty)")
-        return
-    for idx, cert in enumerate(cert_chain):
-        print_cert(cert, f"cert {idx}", "  ")
-
-
 def run_test(tmpdir):
 
     print(f"using tempdir {repr(tmpdir)}")
@@ -452,7 +424,7 @@ def run_test(tmpdir):
 
     test_name = "aia_session.add_trusted_root_cert with non-root cert"
     print(f"{test_name} ...")
-    print_cert(cert1, "cert1")
+    aia.print_cert(cert1, "cert1")
     try:
         aia_session.add_trusted_root_cert(cert1)
         # raise ValueError("must be a CA cert")
@@ -469,7 +441,7 @@ def run_test(tmpdir):
 
     test_name = "aia_session.add_trusted_root_cert"
     print(f"{test_name} ...")
-    print_cert(cert0, "cert0")
+    aia.print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
     assert aia_session.add_trusted_root_cert(cert0) == False  # already added
     print(f"{test_name} ok")
@@ -489,8 +461,8 @@ def run_test(tmpdir):
             timeout=1,
             max_chain_depth=100,
         )
-        # print("verified_cert_chain"); print_chain(verified_cert_chain)
-        # print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
+        # print("missing_certs"); aia.print_chain(missing_certs)
     except Exception:
         raise
     print(f"{test_name} ok")
@@ -499,7 +471,7 @@ def run_test(tmpdir):
 
     test_name = "aia_session.remove_trusted_root_cert"
     print(f"{test_name} ...")
-    print_cert(cert0, "cert0")
+    aia.print_cert(cert0, "cert0")
     assert aia_session.remove_trusted_root_cert(cert0) == True
     assert aia_session.remove_trusted_root_cert(cert0) == False  # already removed
     print(f"{test_name} ok")
@@ -536,7 +508,7 @@ def run_test(tmpdir):
 
     test_name = "aia_session.add_trusted_root_cert"
     print(f"{test_name} ...")
-    print_cert(cert0, "cert0")
+    aia.print_cert(cert0, "cert0")
     assert aia_session.add_trusted_root_cert(cert0) == True
     assert aia_session.add_trusted_root_cert(cert0) == False  # already added
     print(f"{test_name} ok")
@@ -557,8 +529,8 @@ def run_test(tmpdir):
             timeout=1,
             max_chain_depth=100,
         )
-        # print("verified_cert_chain"); print_chain(verified_cert_chain)
-        # print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
+        # print("missing_certs"); aia.print_chain(missing_certs)
     except Exception:
         raise
     print(f"{test_name} ok")
@@ -587,8 +559,8 @@ def run_test(tmpdir):
             timeout=1,
             max_chain_depth=100,
         )
-        # print("verified_cert_chain"); print_chain(verified_cert_chain)
-        # print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
+        # print("missing_certs"); aia.print_chain(missing_certs)
     except TimeoutError:
         pass
     # FIXME BrokenPipeError from http server
@@ -606,6 +578,7 @@ def run_test(tmpdir):
     del aia_session
     print("creating aia_session")
     aia_session = aia.AIASession()
+
     # now aia_chase should fail
     url = https_server_url
     url_parsed = urlsplit(url)
@@ -617,8 +590,8 @@ def run_test(tmpdir):
             timeout=1,
             max_chain_depth=100,
         )
-        # print("verified_cert_chain"); print_chain(verified_cert_chain)
-        # print("missing_certs"); print_chain(missing_certs)
+        # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
+        # print("missing_certs"); aia.print_chain(missing_certs)
     except TimeoutError:
         pass
     https_server_process.cont()
@@ -748,9 +721,9 @@ def run_test(tmpdir):
                     max_chain_depth=100,
                 )
                 print("verified_cert_chain")
-                print_chain(verified_cert_chain)
+                aia.print_chain(verified_cert_chain)
                 print("missing_certs")
-                print_chain(missing_certs)
+                aia.print_chain(missing_certs)
                 assert len(missing_certs) > 0
                 print(
                     f"adding {len(missing_certs)} missing certs to {curl_ca_bundle_path}"
@@ -810,7 +783,7 @@ def run_test(tmpdir):
         print("FIXME got unexpected exception:")
         print("exc.args", exc.args)
         print("exc.certificate", exc.certificate)
-        print_cert(exc.certificate, "exc.certificate")
+        aia.print_cert(exc.certificate, "exc.certificate")
         print("exc.errors", exc.errors)
         print("exc str", str(exc))
         print("exc dir", dir(exc))
@@ -838,6 +811,14 @@ def run_test(tmpdir):
 
     print("aia tests done")
 
+    keep_servers = False
+    #keep_servers = True
+
+    if keep_servers:
+        # keep servers running for manual testing
+        print(f"keeping servers running: {https_server_url} and {http_server_url}")
+        time.sleep(3600)
+
     print(f"cleanup")
     handle_exit()
 
@@ -846,8 +827,9 @@ def run_test(tmpdir):
 
 def main():
 
-    # TODO check if dir exists
     main_tempdir = f"/run/user/{os.getuid()}"
+    if not os.path.exists(main_tempdir):
+        main_tempdir = None
 
     with (
         tempfile.TemporaryDirectory(

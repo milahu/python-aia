@@ -7,6 +7,7 @@ import re
 import socket
 import ssl
 import select
+import time
 from tempfile import NamedTemporaryFile
 from urllib.request import urlopen, Request
 from urllib.parse import urlsplit
@@ -20,8 +21,6 @@ from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.serialization import pkcs7
 from cryptography.hazmat.primitives import hashes
-
-import timeout_decorator
 
 
 __version__ = "0.2.0"
@@ -124,23 +123,33 @@ def openssl_get_cert_info(cert_der):
     return cert_info
 
 
-def print_cert(cert, label=None):
+def print_cert(cert, label=None, indent=""):
     if label:
-        print(label + ":")
+        print(indent + label + ":")
     if isinstance(cert, cryptography.x509.Certificate):
         # cryptography cert
         # https://cryptography.io/en/latest/x509/reference/
-        print(f"  subject: {cert.subject}")
-        print(f"    issuer: {cert.issuer})")
-        print(f"    fingerprint: {cert.fingerprint(hashes.SHA256())}")
+        print(indent + f"  subject: {cert.subject}")
+        print(indent + f"    issuer: {cert.issuer})")
+        print(indent + f"    fingerprint: {cert.fingerprint(hashes.SHA256())}")
         return
     if isinstance(cert, OpenSSL.crypto.X509):
         # pyopenssl cert
-        print(f"  subject: {cert.get_subject()}")
-        print(f"    issuer: {cert.get_issuer()})")
-        print(f'    fingerprint: {cert.digest("sha256")}')
+        print(indent + f"  subject: {cert.get_subject()}")
+        print(indent + f"    issuer: {cert.get_issuer()})")
+        print(indent + f'    fingerprint: {cert.digest("sha256")}')
         return
     raise ValueError("unknown cert type {type(cert)}")
+
+
+def print_chain(cert_chain, label=None):
+    if label:
+        print(label + ":")
+    if not cert_chain:
+        print("  (empty)")
+        return
+    for idx, cert in enumerate(cert_chain):
+        print_cert(cert, f"cert {idx}", "  ")
 
 
 class AIASession:
@@ -190,9 +199,8 @@ class AIASession:
             host, port = host.split(":")
             port = int(port)
         # https://stackoverflow.com/a/67212703/10440128
-        conn = OpenSSL.SSL.Connection(
-            self._context, socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        )
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        conn = OpenSSL.SSL.Connection(self._context, socket=sock)
         conn.settimeout(timeout)
         # NOTE this block can throw OpenSSL.SSL.Error ...
         conn.connect((host, port))
@@ -201,15 +209,32 @@ class AIASession:
 
         # add timeout to conn.do_handshake
         # https://github.com/pyca/pyopenssl/issues/168
-        @timeout_decorator.timeout(timeout, timeout_exception=TimeoutError)
         def do_handshake():
-            conn.do_handshake()
+            conn.setblocking(0)
+            start = time.time()
+            while True:
+                try:
+                    return conn.do_handshake()
+                except (OpenSSL.SSL.WantReadError, OpenSSL.SSL.WantWriteError) as exc:
+                    remain = timeout - (time.time() - start)
+                    if remain < 0:
+                        conn.setblocking(1)
+                        raise TimeoutError
+                    # TODO? handle timeout from select
+                    readable, writable, errored = select.select([sock], [sock], [], remain)
+                    time.sleep(0.5) # reduce cpu load
 
         do_handshake()
 
+        conn.close()
+
         full_cert_chain = conn.get_peer_cert_chain()
         verified_cert_chain = conn.get_verified_chain()
-        conn.close()
+
+        # FIXME verified_cert_chain can be None
+        # FIXME full_cert_chain can be None
+        print("full_cert_chain"); print_chain(full_cert_chain)
+        print("verified_cert_chain"); print_chain(verified_cert_chain)
         if len(verified_cert_chain) == len(full_cert_chain):
             # rest_cert_chain is empty
             # this does not mean that the chain is valid
@@ -500,16 +525,6 @@ class AIASession:
 
         # TODO what to do with rest_cert_chain
         # avoid fetching certs if we have them already
-
-        # debug
-        def print_chain(cert_chain):
-            if not cert_chain:
-                print("  (empty)")
-                return
-            for idx, cert in enumerate(cert_chain):
-                print(f"  {idx} subject: {cert.get_subject()}")
-                print(f"    issuer: {cert.get_issuer()})")
-                print(f'    fingerprint: {cert.digest("sha256")}')
 
         print("verified_cert_chain")
         print_chain(verified_cert_chain)

@@ -37,7 +37,6 @@ setuptools.setup(
         "pyopenssl",
         "cryptography",
         "certifi",
-        "timeout-decorator",
     ],
     classifiers=[
         "Development Status :: 2 - Pre-Alpha",
