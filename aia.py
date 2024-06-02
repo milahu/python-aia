@@ -170,38 +170,20 @@ class AIASession:
         """
         logger.debug("creating AIASession")
         self.user_agent = user_agent
+        self.cafile = cafile
+        if cafile:
+            if not os.path.exists(cafile):
+                raise FileNotFoundError(cafile)
+        else:
+            import certifi
+
+            self.cafile = cafile = certifi.where()
         self.cache_db = cache_db
         self.cache_db_con = None
         self.cache_db_cur = None
         self.cache_dir = cache_dir
         self._context = OpenSSL.SSL.Context(method=OpenSSL.SSL.TLS_CLIENT_METHOD)
-        self.cafile = None
-        if cafile:
-            cafile_list = cafile if isinstance(cafile, list) else [cafile]
-        else:
-            import certifi
-
-            cafile_list = [certifi.where()]
-        for cafile in cafile_list:
-            if not os.path.exists(cafile):
-                logger.debug(f"cafile is missing: {cafile}")
-                continue
-            if os.path.getsize(cafile) == 0:
-                logger.debug(f"cafile is empty: {cafile}")
-                continue
-            try:
-                self._context.load_verify_locations(cafile)
-                logger.debug(f"loaded cafile {cafile}")
-                self.cafile = cafile
-                break
-            except OpenSSL.SSL.Error as exc:
-                logger.debug(f"failed to load cafile {cafile}: {exc}")
-        if self.cafile is None:
-            import certifi
-
-            self.cafile = certifi.where()
-            logger.debug(f"failed to load cafile. using default cafile {self.cafile}")
-            self._context.load_verify_locations(self.cafile)
+        self._context.load_verify_locations(cafile=self.cafile)
         self._cadata_from_host_regex = dict()
         self._trusted_root_certs = list()
 

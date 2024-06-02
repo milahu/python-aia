@@ -599,38 +599,6 @@ def run_test(tmpdir):
 
     print("-" * 80)
 
-    test_name = "aia_session.aia_chase with cafile list"
-    print(f"{test_name} ...")
-    # create new session with cafile list
-    print("destroying aia_session")
-    del aia_session
-    print("creating aia_session")
-    # note: use same ca-bundle.crt for curl and aia
-    aia_session = aia.AIASession(
-        cafile=[
-            "/no/such/file",
-            "/",
-            cert0_path,
-        ],
-    )
-    url = https_server_url
-    url_parsed = urlsplit(url)
-    host = url_parsed.netloc  # note: netloc is host and port
-    # print(f"parsed host {repr(host)} from url {repr(url)}")
-    try:
-        verified_cert_chain, missing_certs = aia_session.aia_chase(
-            host,
-            timeout=1,
-            max_chain_depth=100,
-        )
-        # print("verified_cert_chain"); aia.print_chain(verified_cert_chain)
-        # print("missing_certs"); aia.print_chain(missing_certs)
-    except Exception:
-        raise
-    print(f"{test_name} ok")
-
-    print("-" * 80)
-
     # TODO test max_chain_depth=1
 
     # curl does not-yet support AIA
