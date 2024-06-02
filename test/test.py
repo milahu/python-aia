@@ -602,7 +602,7 @@ def run_test(tmpdir):
     test_name = "aia_session.aia_chase with empty cafile"
     print(f"{test_name} ...")
     empty_file = f"{tmpdir}/empty-file"
-    open(empty_file, 'a').close() # create empty file
+    open(empty_file, "a").close()  # create empty file
     # create new session with empty cafile
     print("destroying aia_session")
     del aia_session
@@ -612,8 +612,10 @@ def run_test(tmpdir):
             cafile=empty_file,
         )
     except OpenSSL.SSL.Error as exc:
-        assert exc.args == ([('x509 certificate routines', '', 'no certificate or crl found')],)
-    aia_session = None # fix: del aia_session
+        assert exc.args == (
+            [("x509 certificate routines", "", "no certificate or crl found")],
+        )
+    aia_session = None  # fix: del aia_session
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -630,12 +632,14 @@ def run_test(tmpdir):
             cafile=missing_file,
         )
     except OpenSSL.SSL.Error as exc:
-        assert exc.args == ([
-            ('system library', '', ''),
-            ('BIO routines', '', 'no such file'),
-            ('x509 certificate routines', '', 'system lib')
-        ],)
-    aia_session = None # fix: del aia_session
+        assert exc.args == (
+            [
+                ("system library", "", ""),
+                ("BIO routines", "", "no such file"),
+                ("x509 certificate routines", "", "system lib"),
+            ],
+        )
+    aia_session = None  # fix: del aia_session
     print(f"{test_name} ok")
 
     print("-" * 80)
@@ -853,7 +857,7 @@ def run_test(tmpdir):
     print("aia tests done")
 
     keep_servers = False
-    #keep_servers = True
+    # keep_servers = True
 
     if keep_servers:
         # keep servers running for manual testing

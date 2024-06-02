@@ -219,8 +219,10 @@ class AIASession:
                         conn.setblocking(1)
                         raise TimeoutError
                     # TODO? handle timeout from select
-                    readable, writable, errored = select.select([sock], [sock], [], remain)
-                    time.sleep(0.5) # reduce cpu load
+                    readable, writable, errored = select.select(
+                        [sock], [sock], [], remain
+                    )
+                    time.sleep(0.5)  # reduce cpu load
 
         do_handshake()
 
@@ -229,10 +231,6 @@ class AIASession:
         full_cert_chain = conn.get_peer_cert_chain()
         verified_cert_chain = conn.get_verified_chain()
 
-        # FIXME verified_cert_chain can be None
-        # FIXME full_cert_chain can be None
-        print("full_cert_chain"); print_chain(full_cert_chain)
-        print("verified_cert_chain"); print_chain(verified_cert_chain)
         if len(verified_cert_chain) == len(full_cert_chain):
             # rest_cert_chain is empty
             # this does not mean that the chain is valid
