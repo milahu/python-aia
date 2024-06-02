@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
 
 import os
+import gc
+import ssl
 import sys
 import time
-import subprocess
-import tempfile
 import random
 import atexit
 import signal
 import shutil
+import socket
+import datetime
+import tempfile
+import subprocess
 from multiprocessing import Process
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-import ssl
-import datetime
 from urllib.parse import urlsplit
 
 import OpenSSL
 
-print("imported OpenSSL module", OpenSSL)
-
 import cryptography
 
-print("imported cryptography module", cryptography)
-
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding
 from cryptography.hazmat.primitives.serialization import pkcs7
 
@@ -35,11 +35,8 @@ import aia
 
 print("imported aia module", aia)
 
+
 # pyppeteer/util.py
-import gc
-import socket
-
-
 def get_free_port() -> int:
     """Get free port."""
     sock = socket.socket()
@@ -50,23 +47,6 @@ def get_free_port() -> int:
     del sock
     gc.collect()
     return port
-
-
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-
-import datetime
-
-from cryptography import x509
-from cryptography.x509.oid import NameOID
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
 
 def create_cert(
