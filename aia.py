@@ -347,9 +347,7 @@ class AIASession:
         # try to load PKCS7-DER format
         try:
             certs = pkcs7.load_der_pkcs7_certificates(cert_bytes)
-            # FIXME Use of assert detected. The enclosed code will be removed
-            #   when compiling to optimised byte code.
-            # assert len(certs) == 1  # TODO
+            assert len(certs) == 1  # TODO
             cert = certs[0]
             # here we need pyopenssl cert
             # for OpenSSL.crypto.X509StoreContext
@@ -438,9 +436,7 @@ class AIASession:
             # convert cert from cryptography to pyopenssl
             # for OpenSSL.crypto.X509StoreContext
             cert = OpenSSL.crypto.X509.from_cryptography(cert)
-        # FIXME Use of assert detected. The enclosed code will be removed
-        #   when compiling to optimised byte code.
-        # assert isinstance(cert, OpenSSL.crypto.X509)
+        assert isinstance(cert, OpenSSL.crypto.X509)
         try:
             ext_bc = cert.to_cryptography().extensions.get_extension_for_class(
                 x509.BasicConstraints
