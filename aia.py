@@ -339,8 +339,7 @@ class AIASession:
         #    raise
 
         # try to load PKCS7 format
-        # https://source.chromium.org/chromium/chromium/src/
-        #   net/cert/internal/cert_issuer_source_aia.cc
+        # https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/cert/internal/cert_issuer_source_aia.cc
         # https://cryptography.io/ # pkcs7
         # ParseCertsFromCms
 
@@ -418,8 +417,7 @@ class AIASession:
             cert_bytes = resp.read()
             # cert_bytes can have different formats: DER = ASN1, CMS = PKCS7 = P7B, PEM
             # https://tools.ietf.org/html/rfc5280#page-50
-            # https://source.chromium.org/chromium/chromium/src/
-            #   net/cert/internal/cert_issuer_source_aia.cc
+            # https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/cert/internal/cert_issuer_source_aia.cc
             # AiaRequest::AddCompletedFetchToResults
             cert = self._load_cert_from_bytes(cert_bytes)
             self._write_cert_cache(url_parsed, cert)
